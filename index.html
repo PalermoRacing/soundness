@@ -140,25 +140,28 @@
       <div class="step"><span class="n">3</span><h3>Upload the video</h3></div>
       <label class="file-drop" for="videoIn" id="drop">
         <strong>Choose a video</strong>
-        <span class="small muted">From your phone's camera roll. 10 to 30 seconds is ideal.</span>
+        <span class="small muted">Best: the horse jogged 20 to 30 m straight away from you, then straight back. Phone held still at hip height, landscape, 60 fps if you can.</span>
       </label>
       <input id="videoIn" type="file" accept="video/*" hidden>
       <div id="videoBox" hidden>
         <video id="video" controls playsinline muted preload="auto"></video>
         <div class="seg" style="margin-top:10px">
           <div class="row">
-            <div class="field"><label for="segLen">Section to analyse</label>
+            <div class="field"><label for="segLen">Section to measure</label>
               <select id="segLen">
-                <option value="4">4 seconds</option>
-                <option value="6" selected>6 seconds</option>
+                <option value="6">6 seconds</option>
                 <option value="10">10 seconds</option>
                 <option value="20">20 seconds</option>
-                <option value="all">Whole clip</option>
+                <option value="30">30 seconds</option>
+                <option value="all" selected>Whole clip (up to 45 s)</option>
               </select></div>
+            <div class="field"><label for="mDir">Direction</label>
+              <select id="mDir"><option value="auto">Away and back (work it out)</option><option value="away">Only jogging away</option><option value="towards">Only jogging towards</option></select></div>
             <button class="btn" type="button" id="setStart">Start from here</button>
           </div>
           <div class="small" id="segInfo"></div>
-          <p class="note" style="margin:0">Scrub the video to where the horse is moving steadily and clearly, then tap <b>Start from here</b>.</p>
+          <p class="note" style="margin:0">Scrub to where the horse starts jogging and tap <b>Start from here</b>. Then <b>drag a box around the horse</b> on the picture below.</p>
+          <canvas id="picker" style="width:100%;max-width:100%;border-radius:8px;touch-action:none;background:#000;cursor:crosshair"></canvas>
         </div>
       </div>
       <div id="videoErr" class="banner" hidden></div>
@@ -166,12 +169,14 @@
 
     <div class="card">
       <div class="step"><span class="n">4</span><h3>Anything we should know?</h3></div>
-      <div class="field"><label for="notes">Notes for the AI (optional)</label>
+      <div class="field"><label for="notes">Notes (optional)</label>
         <textarea id="notes" placeholder="e.g. Felt short on the left front after Saturday's race. Heat in right hind fetlock. New shoes on Tuesday."></textarea></div>
     </div>
 
-    <button class="btn primary big" id="analyseBtn" type="button" disabled>Analyse gait</button>
+    <button class="btn primary big" id="measureBtn" type="button" disabled>Measure movement</button>
+    <button class="link" id="analyseBtn" type="button" disabled style="align-self:center">Or ask the AI for a written opinion (experimental, less reliable)</button>
     <div id="status" hidden>
+      <canvas id="trackView" style="width:100%;max-width:100%;border-radius:8px;background:#000;margin-bottom:8px" hidden></canvas>
       <div class="status"><span class="spinner"></span><span id="statusText"></span><button class="link" id="stopBtn" type="button">Stop</button></div>
       <div class="bar" id="progBar" hidden style="margin-top:8px"><i id="progFill"></i></div>
     </div>
@@ -267,6 +272,8 @@
   </section>
   </main>
 </div>
+<script src="https://cdn.jsdelivr.net/npm/onnxruntime-web@1.20.1/dist/ort.webgpu.min.js"></script>
+<script src="measure.js"></script>
 <script src="config.js"></script>
 <script type="module" src="app.js"></script>
 </body>

@@ -133,9 +133,11 @@ function bindUI(){
   const drop = $("drop");
   drop.ondragover = (e) => e.preventDefault();
   drop.ondrop = (e) => { e.preventDefault(); const f = e.dataTransfer.files[0]; if (f && f.type.startsWith("video")) loadVideo(f); };
-  $("setStart").onclick = () => { S.segStart = $("video").currentTime || 0; updateSegInfo(); };
-  $("segLen").onchange = updateSegInfo;
+  $("setStart").onclick = () => { S.segStart = $("video").currentTime || 0; updateSegInfo(); drawPicker(true); };
+  $("segLen").onchange = () => { updateSegInfo(); drawPicker(true); };
   $("analyseBtn").onclick = analyse;
+  $("measureBtn").onclick = measure;
+  bindPicker();
   $("stopBtn").onclick = () => S.ctl?.abort();
   $("settingsForm").onsubmit = async (e) => {
     e.preventDefault();
@@ -159,7 +161,10 @@ function bindUI(){
 }
 function msg(id, text, ok){ const b=$(id); b.textContent = text; b.hidden = !text; b.className = "small " + (ok ? "ok-text" : "err-text"); }
 function alertBox(id, text){ const b=$(id); b.textContent = text; b.hidden = !text; }
-function updateAnalyseBtn(){ $("analyseBtn").disabled = !($("horseSel").value && S.file && S.settings.geminiKey); }
+function updateAnalyseBtn(){
+  $("analyseBtn").disabled = !($("horseSel").value && S.file && S.settings.geminiKey);
+  $("measureBtn").disabled = !($("horseSel").value && S.file && S.box && window.Measure);
+}
 
 function mountAddForm(p, btnId, slotId, selectId){
   $(slotId).innerHTML = `<form class="seg" id="${p}Form" hidden>
@@ -278,14 +283,14 @@ function hrChart(list){
 function clipDuration(){ const d = $("video").duration; return isFinite(d) ? d : 0; }
 function segWindow(){
   const dur = clipDuration(), lenSel = $("segLen").value;
-  if (lenSel === "all" || !dur) return {start:0, len:dur};
+  if (lenSel === "all" || !dur){ const st = dur > 45 ? Math.min(S.segStart, dur - 45) : 0; return {start: st, len: Math.min(dur, 45)}; }
   const len = Math.min(+lenSel, dur);
   return {start:Math.min(S.segStart, Math.max(0, dur - len)), len};
 }
 function updateSegInfo(){
   const {start,len} = segWindow(), d = clipDuration();
   $("segInfo").innerHTML = d
-    ? `Analysing <span class="mono">${start.toFixed(1)}s – ${(start+len).toFixed(1)}s</span> of a <span class="mono">${d.toFixed(1)}s</span> clip · <span class="mono">${(S.file.size/1048576).toFixed(0)} MB</span>`
+    ? `Using <span class="mono">${start.toFixed(1)}s – ${(start+len).toFixed(1)}s</span> of a <span class="mono">${d.toFixed(1)}s</span> clip · <span class="mono">${(S.file.size/1048576).toFixed(0)} MB</span>`
     : "Loading video…";
 }
 function loadVideo(f){
@@ -297,9 +302,8 @@ function loadVideo(f){
   $("drop").querySelector("strong").textContent = "Choose a different video";
   v.onloadedmetadata = () => {
     const d = clipDuration();
-    if (d > 12) S.segStart = Math.max(0, d/2 - 3);
-    if (d && d <= 8) $("segLen").value = "all";
-    updateSegInfo(); updateAnalyseBtn();
+    S.box = null;
+    updateSegInfo(); updateAnalyseBtn(); drawPicker(true);
   };
   v.onerror = () => {
     S.file = null; updateAnalyseBtn(); $("videoBox").hidden = true;
@@ -307,6 +311,117 @@ function loadVideo(f){
   };
   updateSegInfo(); updateAnalyseBtn();
 }
+/* ---- horse box picker (drag a box on the first frame) ---- */
+async function drawPicker(reseek){
+  const v = $("video"), c = $("picker");
+  if (!S.file || !v.videoWidth) return;
+  if (reseek){ await seekTo(v, segWindow().start + 0.05); }
+  c.width = v.videoWidth; c.height = v.videoHeight;
+  const g = c.getContext("2d"); g.drawImage(v, 0, 0);
+  const b = S.box;
+  if (b){
+    g.fillStyle = "rgba(0,0,0,.45)"; g.fillRect(0,0,c.width,c.height);
+    g.drawImage(v, b.x, b.y, b.w, b.h, b.x, b.y, b.w, b.h);
+    g.strokeStyle = "#00e5ff"; g.lineWidth = Math.max(3, c.width/300); g.strokeRect(b.x, b.y, b.w, b.h);
+  } else {
+    g.fillStyle = "rgba(0,0,0,.35)"; g.fillRect(0, c.height - c.height*0.12, c.width, c.height*0.12);
+    g.fillStyle = "#fff"; g.font = `600 ${Math.round(c.height*0.05)}px sans-serif`; g.textAlign = "center";
+    g.fillText("Drag a box around the horse", c.width/2, c.height - c.height*0.04);
+  }
+}
+function bindPicker(){
+  const c = $("picker"); let start = null;
+  const pt = (e) => { const r = c.getBoundingClientRect(); return { x: (e.clientX - r.left) / r.width * c.width, y: (e.clientY - r.top) / r.height * c.height }; };
+  c.addEventListener("pointerdown", e => { if (!S.file) return; c.setPointerCapture(e.pointerId); start = pt(e); });
+  c.addEventListener("pointermove", e => { if (!start) return; const p = pt(e);
+    S.box = { x: Math.min(start.x, p.x), y: Math.min(start.y, p.y), w: Math.abs(p.x - start.x), h: Math.abs(p.y - start.y) }; drawPicker(false); });
+  c.addEventListener("pointerup", () => { start = null; if (S.box && (S.box.w < 20 || S.box.h < 20)) S.box = null; drawPicker(false); updateAnalyseBtn(); });
+}
+function traceSVG(part, fps, color){
+  if (!part?.ok || !part.trace) return "";
+  const idx = part.trace.map((v, i) => v === null ? -1 : i).filter(i => i >= 0);
+  if (idx.length < 10) return "";
+  const i0 = idx[0], i1 = idx[idx.length-1], vals = idx.map(i => part.trace[i]);
+  const lim = Math.max(10, Math.ceil(Math.max(...vals.map(Math.abs)) / 10) * 10);
+  const W = 640, H = 150, pl = 36, pr = 8, pt = 8, pb = 22;
+  const x = i => pl + (i - i0) / Math.max(1, i1 - i0) * (W - pl - pr), y = v => pt + (lim - v) / (2*lim) * (H - pt - pb);
+  let d = "", pen = false;
+  for (let i = i0; i <= i1; i++){ const v = part.trace[i]; if (v === null){ pen = false; continue; } d += (pen ? "L" : "M") + x(i).toFixed(1) + " " + y(v).toFixed(1); pen = true; }
+  const dots = (part.steps||[]).map(s => part.trace[s.i] === null ? "" : `<circle cx="${x(s.i).toFixed(1)}" cy="${y(part.trace[s.i]).toFixed(1)}" r="4.5" fill="${s.side === "L" ? "#2563eb" : "#ea580c"}"/>`).join("");
+  const secs = (i1 - i0) / fps, ticks = [];
+  for (let t = 0; t <= secs; t += Math.max(1, Math.round(secs/6))) ticks.push(t);
+  return `<div style="overflow-x:auto"><svg viewBox="0 0 ${W} ${H}" width="100%" role="img" aria-label="Vertical movement trace">
+    ${[-lim, 0, lim].map(v => `<line x1="${pl}" x2="${W-pr}" y1="${y(v)}" y2="${y(v)}" stroke="var(--line)"/><text x="${pl-5}" y="${y(v)+4}" text-anchor="end" font-size="11" fill="var(--muted)" font-family="IBM Plex Mono, monospace">${v}</text>`).join("")}
+    ${ticks.map(t => `<text x="${x(i0 + t*fps)}" y="${H-5}" text-anchor="middle" font-size="11" fill="var(--muted)">${t}s</text>`).join("")}
+    <path d="${d}" fill="none" stroke="${color}" stroke-width="2"/>${dots}</svg></div>`;
+}
+function metricsHTML(m){
+  if (!m) return "";
+  const f = (n) => Number.isFinite(n) ? (n > 0 ? "+" : "") + n.toFixed(1) : "–";
+  const row = (name, p, thr) => p?.ok ? `<tr><td>${name}</td><td class="mono">${f(p.minDiff.mean)}</td><td class="mono">${f(p.maxDiff.mean)}</td><td class="mono">${p.strides}</td><td class="mono">${Math.round((p.minDiff.agree||0)*100)}%</td></tr>`
+    : `<tr><td>${name}</td><td colspan="4" class="muted">Not measured: ${esc(p?.reason || "no footage from this angle")}</td></tr>`;
+  return `<div><h3 style="margin-bottom:6px">Measurements</h3>
+    <div style="overflow-x:auto"><table class="mtable"><thead><tr><th></th><th>MinDiff</th><th>MaxDiff</th><th>Strides</th><th>Consistent</th></tr></thead>
+    <tbody>${row("Head (front legs)", m.head)}${row("Pelvis (hind legs)", m.pelvis)}
+    ${m.hips?.ok ? `<tr><td>Hip hike</td><td colspan="4" class="mono">${f(m.hips.diff)} mm (left minus right hip travel)</td></tr>` : ""}</tbody></table></div>
+    <p class="small muted" style="margin:6px 0 0">Approximate millimetres. + means the left side sits higher. As a guide, measuring systems start to flag about 6 mm for the head and 3 mm for the pelvis. Blue dots are left-leg steps, orange are right.</p>
+    ${m.head?.ok ? `<p class="small" style="margin:10px 0 2px"><b>Head</b> (jogging towards)</p>${traceSVG(m.head, m.fps, "var(--accent)")}` : ""}
+    ${m.pelvis?.ok ? `<p class="small" style="margin:10px 0 2px"><b>Pelvis</b> (jogging away)</p>${traceSVG(m.pelvis, m.fps, "var(--ink)")}` : ""}
+  </div>`;
+}
+
+/* ---- measure movement ---- */
+async function measure(){
+  const horse = S.horses.find(h => h.id === $("horseSel").value);
+  if (!horse || !S.file || !S.box || !window.Measure) return;
+  alertBox("checkError",""); $("reportOut").innerHTML = ""; $("stripBox").hidden = true;
+  $("measureBtn").disabled = true; $("analyseBtn").disabled = true; $("status").hidden = false;
+  const tv = $("trackView"); tv.hidden = false;
+  const t0 = Date.now(); let stage = "";
+  const show = () => { $("statusText").textContent = `${stage} (${Math.round((Date.now()-t0)/1000)}s)`; };
+  const setStatus = (t, p) => { stage = t; show(); if (p !== undefined){ $("progBar").hidden = false; $("progFill").style.width = Math.round(p*100) + "%"; } };
+  const ticker = setInterval(show, 1000);
+  S.ctl = new AbortController();
+  const v = $("video"), win = segWindow(), fps = 25;
+  try{
+    setStatus("Getting the tracking model ready…", 0);
+    const snaps = [];
+    const frames = await Measure.track({ video: v, start: win.start, end: win.start + win.len, box: S.box, fps, signal: S.ctl.signal,
+      onStatus: (t, p) => setStatus(t, p ?? 0),
+      onFrame: ({ i, n, kp, box, eta, ep }) => {
+        tv.width = Math.min(960, v.videoWidth); tv.height = Math.round(tv.width * v.videoHeight / v.videoWidth);
+        const g = tv.getContext("2d"), k = tv.width / v.videoWidth; g.setTransform(1,0,0,1,0,0); g.drawImage(v, 0, 0, tv.width, tv.height);
+        g.setTransform(k,0,0,k,0,0); Measure.draw(g, kp, box); g.setTransform(1,0,0,1,0,0);
+        if (i === 1 || i === Math.round(n/3) || i === Math.round(2*n/3) || i === n) snaps.push(thumbFromCanvas(tv));
+        setStatus(`Tracking the horse… frame ${i} of ${n}, about ${eta}s to go${ep === "webgpu" ? "" : " (slower mode on this device)"}`, i/n);
+      } });
+    setStatus("Measuring the strides…");
+    const a = Measure.analyse(frames, { fps, direction: $("mDir").value });
+    const result = Measure.report(a, horse.gait);
+    const pick = (p) => p?.ok ? { ok: true, minDiff: p.minDiff, maxDiff: p.maxDiff, strides: p.strides, seconds: p.seconds, stepMs: p.stepMs, sideCheck: p.sideCheck, trace: p.trace, steps: p.steps } : { ok: false, reason: p?.reason || "", seconds: p?.seconds || 0 };
+    const metrics = { fps, head: pick(a.parts.head), pelvis: pick(a.parts.pelvis), hips: a.parts.hips, meanConf: +a.meanConf.toFixed(2), away: +a.counts.away.toFixed(1), towards: +a.counts.towards.toFixed(1) };
+    const check = {
+      horseId: horse.id, horseName: horse.name, horseGait: horse.gait,
+      footage: $("footage").value, pace: $("pace").value, lungeDir: $("lungeDir").value, surface: $("surface").value,
+      notes: $("notes").value.trim(), clipName: (S.file.name||"").slice(0,120),
+      window: {start:+win.start.toFixed(2), len:+win.len.toFixed(2)}, mode: "measure", frameCount: frames.length, model: "rtmpose-ap10k",
+      createdAt: new Date().toISOString(), result, metrics, thumbs: snaps.slice(0,4),
+      by: S.me?.displayName || S.me?.email || ""
+    };
+    $("reportOut").innerHTML = reportHTML(check);
+    try{ await save("checks", uid("c"), check); addSaved(`Saved to ${hShort(horse)}'s history.`); }
+    catch(err){ addSaved(saveErrMsg(err) + " (The traces may be too long to save; try a shorter section.)"); }
+    $("notes").value = "";
+    $("reportOut").scrollIntoView({behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth", block:"start"});
+  }catch(e){
+    if (e?.name !== "AbortError") alertBox("checkError", e?.message || "Something went wrong while measuring. Try again.");
+  }finally{
+    clearInterval(ticker); tv.hidden = true; $("progBar").hidden = true;
+    $("status").hidden = true; updateAnalyseBtn();
+  }
+}
+function thumbFromCanvas(c, w = 240){ const t = document.createElement("canvas"); t.width = w; t.height = Math.round(c.height * w / c.width); t.getContext("2d").drawImage(c, 0, 0, t.width, t.height); return t.toDataURL("image/jpeg", 0.7); }
+
 function seekTo(v, t){
   return new Promise(res => { let done=false; const fin=()=>{ if(!done){done=true;res();} };
     v.addEventListener("seeked", fin, {once:true}); setTimeout(fin, 4000); v.currentTime = Math.max(0,t); });
@@ -621,7 +736,7 @@ function fmtDate(iso){ try{ return new Date(iso).toLocaleString("en-NZ",{day:"nu
 function limbCell(l){ return `<div class="limb l-${l.level}"><span class="code">${l.limb}</span><span class="lvl">${LEVEL[l.level]}</span>${l.reason?`<span class="why">${esc(l.reason)}</span>`:""}</div>`; }
 function reportHTML(c, opts={}){
   const r = c.result; const L = Object.fromEntries(r.limbs.map(l=>[l.limb,l]));
-  const src = c.mode === "frames" ? `${c.frameCount} still frames` : "video";
+  const src = c.mode === "frames" ? `${c.frameCount} still frames` : c.mode === "measure" ? `measured · ${c.frameCount} frames` : "AI opinion";
   const win = c.window ? ` · ${c.window.start}s–${(c.window.start+c.window.len).toFixed(1)}s` : "";
   return `<div class="report card${c.example?" is-example":""}">
     ${c.example ? `<div><span class="pill p-example">Example report</span> <span class="small muted">What a result looks like. Not one of your horses.</span></div>` : ""}
@@ -632,18 +747,19 @@ function reportHTML(c, opts={}){
       <span>${esc(r.summary)}</span>
       <span class="small muted">Confidence: ${esc(r.confidence)} · Gait seen: ${esc(r.gait_seen)} · Footage: ${esc(r.footage.rating)}</span>
     </div>
-    <div><p class="small muted" style="margin:0 0 6px">AAEP lameness grade${r.grade===null?": not enough to grade":""}</p>
-      <div class="scale">${[0,1,2,3,4,5].map(n=>`<div class="${r.grade===n?"on":""}">${n}</div>`).join("")}</div></div>
+    ${c.mode === "measure" ? "" : `<div><p class="small muted" style="margin:0 0 6px">AAEP lameness grade${r.grade===null?": not enough to grade":""}</p>
+      <div class="scale">${[0,1,2,3,4,5].map(n=>`<div class="${r.grade===n?"on":""}">${n}</div>`).join("")}</div></div>`}
     <div><p class="small muted" style="margin:0 0 6px">Legs, from the horse's point of view</p>
       <div class="limbs"><span></span><span class="hd">Left</span><span class="hd">Right</span>
         <span class="rh">Front</span>${limbCell(L.LF)}${limbCell(L.RF)}
         <span class="rh">Hind</span>${limbCell(L.LH)}${limbCell(L.RH)}</div></div>
-    ${r.observations.length?`<div><h3 style="margin-bottom:8px">What the AI saw</h3><ul class="obs">${r.observations.map(o=>`<li><span class="fr">${esc(o.when)}</span><span>${esc(o.note)}</span></li>`).join("")}</ul></div>`:""}
+    ${c.mode === "measure" ? metricsHTML(c.metrics) : ""}
+    ${r.observations.length && c.mode !== "measure" ?`<div><h3 style="margin-bottom:8px">What the AI saw</h3><ul class="obs">${r.observations.map(o=>`<li><span class="fr">${esc(o.when)}</span><span>${esc(o.note)}</span></li>`).join("")}</ul></div>`:""}
     ${r.next_steps.length?`<div><h3 style="margin-bottom:8px">Next steps</h3><ul class="plain">${r.next_steps.map(s=>`<li>${esc(s)}</li>`).join("")}</ul></div>`:""}
     ${(r.footage.issues.length||r.refilm_tips.length)?`<div><h3 style="margin-bottom:8px">Better footage next time</h3><ul class="plain">${[...r.footage.issues,...r.refilm_tips].map(s=>`<li>${esc(s)}</li>`).join("")}</ul></div>`:""}
     ${c.notes?`<p class="note" style="margin:0">Your notes: ${esc(c.notes)}</p>`:""}
     ${c.thumbs?.length?`<div class="strip">${c.thumbs.map(u=>`<img src="${esc(u)}" alt="">`).join("")}</div>`:""}
-    <p class="disclaimer">A second opinion from phone footage, not a diagnosis. If you're worried, or the grade is 3 or more, call your vet.</p>
+    <p class="disclaimer">${c.mode === "measure" ? "Measured with a free, general animal-tracking model. It is not a validated lameness system, and mild lameness can still be missed." : "An AI opinion from phone footage, not a diagnosis."} If you're worried, call your vet.</p>
     ${opts.deletable?`<div class="confirm" id="delWrap"><button class="link" type="button" data-del="${esc(c.id)}">Delete this check</button></div>`:""}
   </div>`;
 }

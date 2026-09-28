@@ -143,3 +143,6 @@ ul.plain{margin:0;padding-left:18px;display:flex;flex-direction:column;gap:4px;f
 code{font-family:var(--mono);font-size:13px;background:var(--surface-2);padding:1px 5px;border-radius:4px}
 #horseDetail{display:flex;flex-direction:column;gap:16px}
 nav.tabs button{font-size:14px;letter-spacing:.03em;white-space:nowrap;padding-inline:4px}
+.mtable{border-collapse:collapse;width:100%;font-size:13px}
+.mtable th,.mtable td{border-bottom:1px solid var(--line);padding:6px 8px;text-align:left;white-space:nowrap}
+.mtable th{font-weight:600;color:var(--muted)}
