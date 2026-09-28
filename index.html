@@ -1,0 +1,222 @@
+<!doctype html>
+<html lang="en-NZ">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Palermo Gait Check</title>
+<meta name="description" content="Palermo Racing stable tool: video lameness checks and heart-rate recovery for each horse.">
+<meta name="theme-color" content="#A8223A">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Gait Check">
+<link rel="apple-touch-icon" href="icon-192.png">
+<link rel="icon" href="icon-192.png">
+<link rel="manifest" href="manifest.json">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<div class="wrap">
+  <header class="top">
+    <div class="topline">
+      <span class="eyebrow">Palermo Racing</span>
+      <span class="who" id="who" hidden><span id="whoName"></span><button class="link" id="settingsBtn" type="button">Settings</button><button class="link" id="signOutBtn" type="button">Sign out</button></span>
+    </div>
+    <h1>Gait Check</h1>
+    <p class="sub">Upload a phone video of one of the team. AI studies the movement and points to the leg or legs that may be sore. Log heart-rate recovery after work, and keep every horse's history in one place.</p>
+  </header>
+
+  <!-- SIGN IN -->
+  <section id="signinView" class="center" hidden>
+    <div class="card signin">
+      <h2>Sign in</h2>
+      <p class="muted" style="margin:0">Use the Google account the stable has added to the team list.</p>
+      <button class="btn primary big" id="signInBtn" type="button">Sign in with Google</button>
+      <div id="signinMsg" class="banner" hidden></div>
+    </div>
+  </section>
+
+  <div id="setupView" class="card" hidden>
+    <h2>Almost there</h2>
+    <p style="margin:0">This copy of Gait Check hasn't been connected to Firebase yet. Open <code>config.js</code> and paste in your Firebase settings. The setup guide (step 2) shows where to find them.</p>
+  </div>
+
+  <main id="appView" hidden>
+  <nav class="tabs" role="tablist">
+    <button role="tab" aria-selected="true" data-tab="check">Gait</button>
+    <button role="tab" aria-selected="false" data-tab="hr">Heart rate</button>
+    <button role="tab" aria-selected="false" data-tab="horses">Horses</button>
+    <button role="tab" aria-selected="false" data-tab="guide">Filming</button>
+  </nav>
+
+  <div id="storeNote" class="banner" hidden></div>
+
+  <!-- NEW CHECK -->
+  <section class="panel" id="panel-check">
+    <div class="card">
+      <div class="step"><span class="n">1</span><h3>Which horse?</h3></div>
+      <div class="row">
+        <div class="field"><label for="horseSel">Horse</label><select id="horseSel"></select></div>
+        <button class="btn" id="addHorseBtn" type="button">+ Add horse</button>
+      </div>
+      <div id="addHorseSlot"></div>
+    </div>
+
+    <div class="card">
+      <div class="step"><span class="n">2</span><h3>What does the video show?</h3></div>
+      <div class="row">
+        <div class="field"><label for="footage">Camera view</label>
+          <select id="footage">
+            <option value="inhand_straight">In hand, jogged straight towards / away from camera</option>
+            <option value="inhand_side">In hand, filmed side-on</option>
+            <option value="behind">Filmed from behind while horse is walked or run away</option>
+            <option value="cart">Jogging or working in the cart</option>
+            <option value="lunge">Lunging / trotting in a circle</option>
+          </select></div>
+        <div class="field"><label for="pace">Pace</label>
+          <select id="pace">
+            <option value="jog">Jog (trot or pace)</option>
+            <option value="walk">Walk</option>
+            <option value="fast">Fast work / speed</option>
+          </select></div>
+      </div>
+      <div class="row">
+        <div class="field"><label for="lungeDir">If lunging: direction</label>
+          <select id="lungeDir"><option value="">Not lunging</option><option value="left">Left rein (anticlockwise)</option><option value="right">Right rein (clockwise)</option></select></div>
+        <div class="field"><label for="surface">Surface</label>
+          <select id="surface"><option value="hard">Hard / sealed</option><option value="track">Track</option><option value="grass">Grass / soft</option><option value="other">Other</option></select></div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="step"><span class="n">3</span><h3>Upload the video</h3></div>
+      <label class="file-drop" for="videoIn" id="drop">
+        <strong>Choose a video</strong>
+        <span class="small muted">From your phone's camera roll. 10 to 30 seconds is ideal.</span>
+      </label>
+      <input id="videoIn" type="file" accept="video/*" hidden>
+      <div id="videoBox" hidden>
+        <video id="video" controls playsinline muted preload="auto"></video>
+        <div class="seg" style="margin-top:10px">
+          <div class="row">
+            <div class="field"><label for="segLen">Section to analyse</label>
+              <select id="segLen">
+                <option value="4">4 seconds</option>
+                <option value="6" selected>6 seconds</option>
+                <option value="10">10 seconds</option>
+                <option value="20">20 seconds</option>
+                <option value="all">Whole clip</option>
+              </select></div>
+            <button class="btn" type="button" id="setStart">Start from here</button>
+          </div>
+          <div class="small" id="segInfo"></div>
+          <p class="note" style="margin:0">Scrub the video to where the horse is moving steadily and clearly, then tap <b>Start from here</b>.</p>
+        </div>
+      </div>
+      <div id="videoErr" class="banner" hidden></div>
+    </div>
+
+    <div class="card">
+      <div class="step"><span class="n">4</span><h3>Anything we should know?</h3></div>
+      <div class="field"><label for="notes">Notes for the AI (optional)</label>
+        <textarea id="notes" placeholder="e.g. Felt short on the left front after Saturday's race. Heat in right hind fetlock. New shoes on Tuesday."></textarea></div>
+    </div>
+
+    <button class="btn primary big" id="analyseBtn" type="button" disabled>Analyse gait</button>
+    <div id="status" hidden>
+      <div class="status"><span class="spinner"></span><span id="statusText"></span><button class="link" id="stopBtn" type="button">Stop</button></div>
+      <div class="bar" id="progBar" hidden style="margin-top:8px"><i id="progFill"></i></div>
+    </div>
+    <div id="stripBox" hidden><p class="small muted" style="margin:0 0 6px" id="stripLabel">Frames sent for analysis</p><div class="strip" id="strip"></div></div>
+    <div id="checkError" class="banner" hidden></div>
+
+    <div id="reportOut"></div>
+  </section>
+
+  <!-- HEART RATE -->
+  <section class="panel" id="panel-hr" hidden>
+    <div class="card">
+      <div><h2>Heart rate recovery</h2><p class="muted small" style="margin:4px 0 0">Take the heart rate straight after work, then again at 10 and 20 minutes. A horse recovering slower than its usual can be an early sign of soreness, illness or fatigue.</p></div>
+      <div class="row">
+        <div class="field"><label for="hrHorse">Horse</label><select id="hrHorse"></select></div>
+        <button class="btn" id="hrAddHorseBtn" type="button">+ Add horse</button>
+      </div>
+      <div id="hrAddHorseSlot"></div>
+      <form id="hrForm" style="display:flex;flex-direction:column;gap:12px">
+      <div class="row">
+        <div class="field"><label for="hrWhen">Date and time of work</label><input id="hrWhen" type="datetime-local" required></div>
+        <div class="field"><label for="hrWork">Work</label>
+          <select id="hrWork"><option value="jog">Jog</option><option value="fast">Fast work</option><option value="trial">Trial / workout</option><option value="race">Race</option><option value="other">Other</option></select></div>
+      </div>
+      <div class="row">
+        <div class="field"><label for="hr0">Straight after (bpm)</label><input id="hr0" type="number" inputmode="numeric" min="20" max="260" required placeholder="e.g. 180"></div>
+        <div class="field"><label for="hr10">After 10 min (bpm)</label><input id="hr10" type="number" inputmode="numeric" min="20" max="260" placeholder="e.g. 92"></div>
+        <div class="field"><label for="hr20">After 20 min (bpm)</label><input id="hr20" type="number" inputmode="numeric" min="20" max="260" placeholder="e.g. 60"></div>
+      </div>
+      <div class="field"><label for="hrNotes">Notes (optional)</label><input id="hrNotes" type="text" placeholder="e.g. 2 × 1600 m, last half 58s. Hot day."></div>
+      <button class="btn primary big" type="submit">Save heart rates</button>
+      <div id="hrMsg" class="small" hidden></div>
+      </form>
+    </div>
+    <div>
+      <h3 style="margin-bottom:8px">Latest readings</h3>
+      <div id="hrRecent" class="history"></div>
+    </div>
+  </section>
+
+  <!-- HORSES -->
+  <section class="panel" id="panel-horses" hidden>
+    <div id="horsesTop" class="row">
+      <div class="field"><label for="horseSearch">Search horses</label><input id="horseSearch" type="search" placeholder="Type a name…" autocomplete="off"></div>
+      <button class="btn" id="hAddHorseBtn" type="button">+ Add horse</button>
+    </div>
+    <div id="hAddHorseSlot"></div>
+    <div id="horsesList"></div>
+    <div id="horseDetail" hidden></div>
+  </section>
+
+  <!-- GUIDE -->
+  <section class="panel guide" id="panel-guide" hidden>
+    <div class="card">
+      <h2>Filming for a good read</h2>
+      <p class="muted" style="margin:0">Steady, close, well-lit footage on firm ground makes the biggest difference.</p>
+      <h3>Every video</h3>
+      <ul>
+        <li>Hold the phone <b>landscape</b> and still, at about the height of the horse's elbow. Brace against a rail if you can.</li>
+        <li>Film on a <b>firm, level surface</b>. Soft ground hides lameness.</li>
+        <li>Keep the whole horse in frame, hooves included. Zoom as little as possible.</li>
+        <li>Record at <b>60 fps</b> if your phone offers it, and 1080p rather than 4K (smaller files upload faster).</li>
+        <li>Get at least <b>6 to 8 strides</b> of steady movement. Handler on a loose lead so the head can move freely.</li>
+      </ul>
+      <h3>By camera view</h3>
+      <dl class="kv">
+        <dt>Towards / away</dt><dd>Jog 25 to 30 m straight away from you, turn, and come back. Stand directly in line. Best for head nod and hip hike.</dd>
+        <dt>Side-on</dt><dd>Stand 8 to 10 m to the side and let the horse pass. Film both sides in separate clips. Best for stride length and fetlock drop.</dd>
+        <dt>From behind</dt><dd>Stand still behind the horse as it moves away. Best for hip symmetry and how each hind foot lands.</dd>
+        <dt>In the cart</dt><dd>Film from the infield or a following vehicle, side-on or from behind. Note if hopples are on.</dd>
+        <dt>Lunging</dt><dd>Film both reins as separate checks, and say which rein in step 2. Lameness often shows more on one rein.</dd>
+      </dl>
+      <h3>Pacers and trotters</h3>
+      <p style="margin:0">Mark each horse's gait when you add it. Trotters move diagonal legs together and pacers move same-side legs together, so the head and hip clues read differently. For pacers, footage from behind and side-on usually reads more clearly than head-on.</p>
+    </div>
+    <p class="disclaimer">Gait Check gives a second opinion from video to help you decide what to watch and when to call the vet. It does not replace a veterinary lameness exam, flexion tests or imaging.</p>
+  </section>
+
+  <!-- SETTINGS -->
+  <section class="panel" id="panel-settings" hidden>
+    <form class="card" id="settingsForm">
+      <h2>Settings</h2>
+      <p class="muted small" style="margin:0">Saved in your stable's database, so everyone on the team shares them. Only signed-in team members can see the key.</p>
+      <div class="field"><label for="setKey">Gemini API key</label><input id="setKey" type="password" autocomplete="off" placeholder="Paste the key from Google AI Studio"></div>
+      <div class="field"><label for="setModel">AI model (leave blank for the default)</label><input id="setModel" type="text" autocomplete="off" placeholder="gemini-3-flash-preview"></div>
+      <div class="row"><button class="btn primary" type="submit">Save settings</button><button class="btn" type="button" id="testKeyBtn">Test the key</button></div>
+      <div id="settingsMsg" class="small" hidden></div>
+    </form>
+    <button class="link" type="button" id="settingsBack">← Back</button>
+  </section>
+  </main>
+</div>
+<script src="config.js"></script>
+<script type="module" src="app.js"></script>
+</body>
+</html>
