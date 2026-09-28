@@ -772,7 +772,7 @@ function renderLatestOrExample(){
 /* ================= work diary ================= */
 function resetDiaryForm(keepHorse){
   const h = keepHorse ? $("dHorse").value : $("dHorse").value;
-  ["dDistance","dTimes","dDriver","dNotes","dFarrier","dShoeType"].forEach(i => $(i).value = "");
+  ["dDistance","dTimes","dNotes","dFarrier","dShoeType"].forEach(i => $(i).value = "");
   $("dDate").value = todayStr();
   $("dNextDue").value = ""; delete $("dNextDue").dataset.touched;
   $("dShoeWork").value = "full";
@@ -793,7 +793,7 @@ async function saveDiary(e){
   const rec = {
     horseId: horse.id, horseName: horse.name, date: $("dDate").value || todayStr(), type,
     distance: farrier ? "" : $("dDistance").value.trim(), times: farrier ? "" : $("dTimes").value.trim(),
-    driver: $("dDriver").value.trim(), notes: $("dNotes").value.trim(),
+    notes: $("dNotes").value.trim(),
     farrier: farrier ? $("dFarrier").value.trim() : "", shoeWork: farrier ? $("dShoeWork").value : "",
     shoeType: farrier ? $("dShoeType").value.trim() : "", nextDue: farrier ? ($("dNextDue").value || "") : "",
     createdAt: new Date().toISOString(), by: S.me?.displayName || S.me?.email || ""
