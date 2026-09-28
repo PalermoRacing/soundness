@@ -23,7 +23,7 @@
       <span class="who" id="who" hidden><span id="whoName"></span><button class="link" id="settingsBtn" type="button">Settings</button><button class="link" id="signOutBtn" type="button">Sign out</button></span>
     </div>
     <h1>Gait Check</h1>
-    <p class="sub">Upload a phone video of one of the team. AI studies the movement and points to the leg or legs that may be sore. Log heart-rate recovery after work, and keep every horse's history in one place.</p>
+    <p class="sub">The stable's training diary. Record work, shoeing, heart rate and temperature, and check a horse's gait from a phone video. Every horse's history is kept in one place.</p>
   </header>
 
   <!-- SIGN IN -->
@@ -42,17 +42,65 @@
   </div>
 
   <main id="appView" hidden>
-  <nav class="tabs" role="tablist">
-    <button role="tab" aria-selected="true" data-tab="check">Gait</button>
-    <button role="tab" aria-selected="false" data-tab="hr">Heart rate</button>
+  <nav class="tabs" role="tablist" style="overflow-x:auto">
+    <button role="tab" aria-selected="true" data-tab="diary">Diary</button>
+    <button role="tab" aria-selected="false" data-tab="check">Gait</button>
+    <button role="tab" aria-selected="false" data-tab="hr">HR &amp; temp</button>
     <button role="tab" aria-selected="false" data-tab="horses">Horses</button>
     <button role="tab" aria-selected="false" data-tab="guide">Filming</button>
   </nav>
 
   <div id="storeNote" class="banner" hidden></div>
 
+  <!-- WORK DIARY -->
+  <section class="panel" id="panel-diary">
+    <div class="card">
+      <div><h2>Work diary</h2><p class="muted small" style="margin:4px 0 0">Record each horse's work, rest days, shoeing and treatments. Everything saves to the horse's page.</p></div>
+      <div class="row">
+        <div class="field"><label for="dHorse">Horse</label><select id="dHorse"></select></div>
+        <button class="btn" id="dAddHorseBtn" type="button">+ Add horse</button>
+      </div>
+      <div id="dAddHorseSlot"></div>
+      <form id="dForm" style="display:flex;flex-direction:column;gap:12px">
+        <div class="row">
+          <div class="field"><label for="dDate">Date</label><input id="dDate" type="date" required></div>
+          <div class="field"><label for="dType">What was done</label>
+            <select id="dType">
+              <option value="jog">Jog</option><option value="fast">Fast work</option><option value="track">Trackwork</option>
+              <option value="trial">Trial</option><option value="race">Race</option><option value="swim">Swim</option>
+              <option value="walker">Walker</option><option value="treadmill">Treadmill</option><option value="paddock">Paddock / turnout</option>
+              <option value="rest">Rest day</option><option value="farrier">Shod / farrier</option><option value="vet">Vet / treatment</option><option value="other">Other</option>
+            </select></div>
+        </div>
+        <div id="dWorkFields" class="row">
+          <div class="field"><label for="dDistance">Distance / sets</label><input id="dDistance" type="text" placeholder="e.g. 8 km jog, or 3 × 1600 m"></div>
+          <div class="field"><label for="dTimes">Times</label><input id="dTimes" type="text" placeholder="e.g. mile 2:02, last half 58"></div>
+        </div>
+        <div id="dFarrierFields" class="seg" hidden>
+          <div class="row">
+            <div class="field"><label for="dShoeWork">Work done</label>
+              <select id="dShoeWork"><option value="full">Full set</option><option value="fronts">Fronts only</option><option value="hinds">Hinds only</option><option value="reset">Reset</option><option value="trim">Trim only</option><option value="lost">Lost shoe replaced</option></select></div>
+            <div class="field"><label for="dFarrier">Farrier</label><input id="dFarrier" type="text" placeholder="Farrier's name"></div>
+          </div>
+          <div class="row">
+            <div class="field"><label for="dShoeType">Shoes / notes on shoeing</label><input id="dShoeType" type="text" placeholder="e.g. aluminium fronts, steel hinds"></div>
+            <div class="field"><label for="dNextDue">Next due</label><input id="dNextDue" type="date"></div>
+          </div>
+        </div>
+        <div class="field"><label for="dDriver">Driver / rider / handler (optional)</label><input id="dDriver" type="text" placeholder="Who worked the horse"></div>
+        <div class="field"><label for="dNotes">Notes (optional)</label><textarea id="dNotes" placeholder="How the horse went, gear, anything to remember"></textarea></div>
+        <button class="btn primary big" type="submit">Save to diary</button>
+        <div id="dMsg" class="small" hidden></div>
+      </form>
+    </div>
+    <div>
+      <h3 style="margin-bottom:4px">Last two weeks</h3>
+      <div id="dRecent" class="history"></div>
+    </div>
+  </section>
+
   <!-- NEW CHECK -->
-  <section class="panel" id="panel-check">
+  <section class="panel" id="panel-check" hidden>
     <div class="card">
       <div class="step"><span class="n">1</span><h3>Which horse?</h3></div>
       <div class="row">
@@ -136,7 +184,7 @@
   <!-- HEART RATE -->
   <section class="panel" id="panel-hr" hidden>
     <div class="card">
-      <div><h2>Heart rate recovery</h2><p class="muted small" style="margin:4px 0 0">Take the heart rate straight after work, then again at 10 and 20 minutes. A horse recovering slower than its usual can be an early sign of soreness, illness or fatigue.</p></div>
+      <div><h2>Heart rate &amp; temperature</h2><p class="muted small" style="margin:4px 0 0">Take the heart rate straight after work, then again at 10 and 20 minutes, and log the temperature. A horse recovering slower than its usual, or running a temperature, can be an early sign of soreness, illness or fatigue. Fill in whichever readings you have.</p></div>
       <div class="row">
         <div class="field"><label for="hrHorse">Horse</label><select id="hrHorse"></select></div>
         <button class="btn" id="hrAddHorseBtn" type="button">+ Add horse</button>
@@ -149,12 +197,15 @@
           <select id="hrWork"><option value="jog">Jog</option><option value="fast">Fast work</option><option value="trial">Trial / workout</option><option value="race">Race</option><option value="other">Other</option></select></div>
       </div>
       <div class="row">
-        <div class="field"><label for="hr0">Straight after (bpm)</label><input id="hr0" type="number" inputmode="numeric" min="20" max="260" required placeholder="e.g. 180"></div>
+        <div class="field"><label for="hr0">Straight after (bpm)</label><input id="hr0" type="number" inputmode="numeric" min="20" max="260" placeholder="e.g. 180"></div>
         <div class="field"><label for="hr10">After 10 min (bpm)</label><input id="hr10" type="number" inputmode="numeric" min="20" max="260" placeholder="e.g. 92"></div>
         <div class="field"><label for="hr20">After 20 min (bpm)</label><input id="hr20" type="number" inputmode="numeric" min="20" max="260" placeholder="e.g. 60"></div>
       </div>
+      <div class="row">
+        <div class="field"><label for="hrTemp">Temperature (°C)</label><input id="hrTemp" type="text" inputmode="decimal" autocomplete="off" placeholder="e.g. 37.8"></div>
+      </div>
       <div class="field"><label for="hrNotes">Notes (optional)</label><input id="hrNotes" type="text" placeholder="e.g. 2 × 1600 m, last half 58s. Hot day."></div>
-      <button class="btn primary big" type="submit">Save heart rates</button>
+      <button class="btn primary big" type="submit">Save readings</button>
       <div id="hrMsg" class="small" hidden></div>
       </form>
     </div>

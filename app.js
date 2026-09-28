@@ -18,9 +18,19 @@ const LIMBS = {LF:"Left fore", RF:"Right fore", LH:"Left hind", RH:"Right hind"}
 const VERDICT = {sound:"Looks sound", possible:"Possible lameness", lame:"Lame", unclear:"Can't tell"};
 const LEVEL = {none:"No sign", watch:"Watch", suspect:"Suspect", likely:"Likely"};
 const WORK = {jog:"Jog", fast:"Fast work", trial:"Trial / workout", race:"Race", other:"Other"};
+const DTYPE = {jog:"Jog", fast:"Fast work", track:"Trackwork", trial:"Trial", race:"Race", swim:"Swim", walker:"Walker", treadmill:"Treadmill", paddock:"Paddock / turnout", rest:"Rest day", farrier:"Shod / farrier", vet:"Vet / treatment", other:"Other"};
+const SHOEWORK = {full:"Full set", fronts:"Fronts only", hinds:"Hinds only", reset:"Reset", trim:"Trim only", lost:"Lost shoe replaced"};
+const horseById = (id) => S.horses.find(h => h.id === id);
+const hLabel = (h) => !h ? "" : (h.stableName && h.stableName.trim().toLowerCase() !== String(h.name||"").trim().toLowerCase()) ? `${h.stableName} (${h.name})` : h.name;
+const hShort = (h) => !h ? "" : (h.stableName || h.name);
+const hName = (id, fallback) => { const h = horseById(id); return h ? hLabel(h) : (fallback || "Unknown horse"); };
+const todayStr = () => { const d = new Date(); d.setMinutes(d.getMinutes() - d.getTimezoneOffset()); return d.toISOString().slice(0,10); };
+const addDays = (str, n) => { const d = new Date(str + "T12:00:00"); d.setDate(d.getDate() + n); d.setMinutes(d.getMinutes() - d.getTimezoneOffset()); return d.toISOString().slice(0,10); };
+const fmtDay = (str) => { try { return new Date(str + "T12:00:00").toLocaleDateString("en-NZ", {weekday:"short", day:"numeric", month:"short", year:"numeric"}); } catch(_){ return str; } };
 
 const S = { fs:null, auth:null, me:null, horses:[], checks:[], hr:[], settings:{}, unsubs:[],
-  file:null, segStart:0, ctl:null, openHorse:null, openCheck:null, prevTab:"check" };
+  diary:[], showAllDiary:false, editHorse:false,
+  file:null, segStart:0, ctl:null, openHorse:null, openCheck:null, prevTab:"diary" };
 
 /* ================= boot & auth ================= */
 function boot(){
@@ -59,8 +69,8 @@ function startData(){
     } else alertBox("storeNote", "Can't reach the database right now. Check your internet connection.");
   };
   S.unsubs.push(onSnapshot(collection(S.fs,"horses"), snap => {
-    S.horses = snap.docs.map(d => ({id:d.id, ...d.data()})).sort((a,b)=>String(a.name).localeCompare(String(b.name)));
-    renderHorseSelect(); renderHorses();
+    S.horses = snap.docs.map(d => ({id:d.id, ...d.data()})).sort((a,b)=>String(hShort(a)).localeCompare(String(hShort(b))));
+    renderHorseSelect(); renderHorses(); renderDiaryRecent(); renderHrRecent();
   }, denied));
   S.unsubs.push(onSnapshot(query(collection(S.fs,"checks"), orderBy("createdAt","desc"), limit(500)), snap => {
     S.checks = snap.docs.map(d => ({id:d.id, ...d.data()}));
@@ -70,12 +80,16 @@ function startData(){
     S.hr = snap.docs.map(d => ({id:d.id, ...d.data()}));
     renderHrRecent(); renderHorses();
   }, denied));
+  S.unsubs.push(onSnapshot(query(collection(S.fs,"diary"), orderBy("date","desc"), limit(3000)), snap => {
+    S.diary = snap.docs.map(d => ({id:d.id, ...d.data()})).sort((a,b) => (b.date||"").localeCompare(a.date||"") || (b.createdAt||"").localeCompare(a.createdAt||""));
+    renderDiaryRecent(); renderHorses();
+  }, denied));
   S.unsubs.push(onSnapshot(doc(S.fs,"settings","app"), snap => {
     S.settings = snap.exists() ? snap.data() : {};
     $("setKey").value = S.settings.geminiKey || ""; $("setModel").value = S.settings.model || "";
     keyNote(); updateAnalyseBtn();
   }, () => {}));
-  renderHorseSelect(); renderHorses(); renderLatestOrExample(); renderHrRecent();
+  renderHorseSelect(); renderHorses(); renderLatestOrExample(); renderHrRecent(); renderDiaryRecent();
 }
 function keyNote(){
   const n = $("storeNote");
@@ -91,9 +105,9 @@ function saveErrMsg(err){
 
 /* ================= tabs & UI ================= */
 function showTab(t){
-  if (t === "settings"){ const cur = document.querySelector('nav.tabs [aria-selected="true"]'); S.prevTab = cur?.dataset.tab || "check"; }
+  if (t === "settings"){ const cur = document.querySelector('nav.tabs [aria-selected="true"]'); S.prevTab = cur?.dataset.tab || "diary"; }
   document.querySelectorAll("nav.tabs button").forEach(b => b.setAttribute("aria-selected", String(b.dataset.tab===t)));
-  ["check","hr","horses","guide","settings"].forEach(p => $("panel-"+p).hidden = p!==t);
+  ["diary","check","hr","horses","guide","settings"].forEach(p => $("panel-"+p).hidden = p!==t);
   window.scrollTo(0,0);
 }
 function bindUI(){
@@ -105,6 +119,12 @@ function bindUI(){
   mountAddForm("add", "addHorseBtn", "addHorseSlot", "horseSel");
   mountAddForm("hra", "hrAddHorseBtn", "hrAddHorseSlot", "hrHorse");
   mountAddForm("hha", "hAddHorseBtn", "hAddHorseSlot", null);
+  mountAddForm("dad", "dAddHorseBtn", "dAddHorseSlot", "dHorse");
+  $("dForm").onsubmit = saveDiary;
+  $("dType").onchange = syncDiaryFields;
+  $("dDate").onchange = () => { if ($("dType").value === "farrier" && !$("dNextDue").dataset.touched) $("dNextDue").value = addDays($("dDate").value || todayStr(), 35); };
+  $("dNextDue").oninput = () => { $("dNextDue").dataset.touched = "1"; };
+  resetDiaryForm();
   $("horseSel").onchange = updateAnalyseBtn;
   $("horseSearch").oninput = renderHorses;
   $("hrForm").onsubmit = saveHr;
@@ -144,7 +164,10 @@ function updateAnalyseBtn(){ $("analyseBtn").disabled = !($("horseSel").value &&
 function mountAddForm(p, btnId, slotId, selectId){
   $(slotId).innerHTML = `<form class="seg" id="${p}Form" hidden>
     <div class="row">
-      <div class="field"><label for="${p}Name">Name</label><input id="${p}Name" type="text" required placeholder="e.g. Palermo Star"></div>
+      <div class="field"><label for="${p}Name">Race name</label><input id="${p}Name" type="text" required placeholder="Registered name, e.g. Palermo Star"></div>
+      <div class="field"><label for="${p}Stable">Stable name (optional)</label><input id="${p}Stable" type="text" placeholder="What you call them, e.g. Star"></div>
+    </div>
+    <div class="row">
       <div class="field"><label for="${p}Gait">Gait</label><select id="${p}Gait"><option value="pacer">Pacer</option><option value="trotter">Trotter</option></select></div>
     </div>
     <div class="field"><label for="${p}Notes">Notes (optional)</label><input id="${p}Notes" type="text" placeholder="Age, known issues, shoeing…"></div>
@@ -159,17 +182,17 @@ function mountAddForm(p, btnId, slotId, selectId){
     const name = $(p+"Name").value.trim(); if (!name) return;
     if (S.horses.some(h => h.name.toLowerCase() === name.toLowerCase())){ msg(p+"Msg", `${name} is already in the list.`, false); return; }
     const id = uid("h");
-    try{ await save("horses", id, {name, gait:$(p+"Gait").value, notes:$(p+"Notes").value.trim(), createdAt:new Date().toISOString(), createdBy:S.me?.email||""}); }
+    try{ await save("horses", id, {name, stableName:$(p+"Stable").value.trim(), gait:$(p+"Gait").value, notes:$(p+"Notes").value.trim(), createdAt:new Date().toISOString(), createdBy:S.me?.email||""}); }
     catch(err){ msg(p+"Msg", saveErrMsg(err), false); return; }
     form.reset(); form.hidden = true; msg(p+"Msg","",true);
     if (selectId) setTimeout(()=>{ $(selectId).value = id; updateAnalyseBtn(); }, 300);
   };
 }
 function renderHorseSelect(){
-  ["horseSel","hrHorse"].forEach(id => {
+  ["horseSel","hrHorse","dHorse"].forEach(id => {
     const sel = $(id); const cur = sel.value;
     sel.innerHTML = S.horses.length
-      ? `<option value="">Choose a horse…</option>` + S.horses.map(h => `<option value="${esc(h.id)}">${esc(h.name)} · ${h.gait==="trotter"?"Trotter":"Pacer"}</option>`).join("")
+      ? `<option value="">Choose a horse…</option>` + S.horses.map(h => `<option value="${esc(h.id)}">${esc(hLabel(h))} · ${h.gait==="trotter"?"Trotter":"Pacer"}</option>`).join("")
       : `<option value="">Add your first horse →</option>`;
     if (S.horses.some(h=>h.id===cur)) sel.value = cur;
   });
@@ -183,14 +206,18 @@ async function saveHr(e){
   const horse = S.horses.find(h => h.id === $("hrHorse").value);
   if (!horse){ msg("hrMsg","Choose a horse first.", false); return; }
   const num = (id) => { const v = $(id).value.trim(); return v === "" ? null : Math.round(+v); };
+  const tv = $("hrTemp").value.trim().replace(",", ".");
+  const temp = tv === "" ? null : Math.round(parseFloat(tv)*10)/10;
+  if (temp !== null && (isNaN(temp) || temp < 30 || temp > 45)){ msg("hrMsg","Enter the temperature in \u00b0C, e.g. 37.8.", false); return; }
   const rec = {horseId:horse.id, horseName:horse.name, at:new Date($("hrWhen").value).toISOString(), work:$("hrWork").value,
-    bpm0:num("hr0"), bpm10:num("hr10"), bpm20:num("hr20"), notes:$("hrNotes").value.trim(),
+    bpm0:num("hr0"), bpm10:num("hr10"), bpm20:num("hr20"), temp, notes:$("hrNotes").value.trim(),
     createdAt:new Date().toISOString(), by:S.me?.displayName || S.me?.email || ""};
-  if (rec.bpm0 === null){ msg("hrMsg","Enter the heart rate taken straight after work.", false); return; }
+  if (rec.bpm0 === null && rec.temp === null){ msg("hrMsg","Enter a heart rate or a temperature.", false); return; }
   const id = uid("r");
   try{ await save("hr", id, rec); }catch(err){ msg("hrMsg", saveErrMsg(err), false); return; }
-  ["hr0","hr10","hr20","hrNotes"].forEach(i => $(i).value = ""); resetHrWhen();
-  msg("hrMsg", `Saved for ${horse.name}. ${hrFlag({id, ...rec}).text}`, true);
+  ["hr0","hr10","hr20","hrTemp","hrNotes"].forEach(i => $(i).value = ""); resetHrWhen();
+  const tf = tempFlag(rec.temp);
+  msg("hrMsg", `Saved for ${hShort(horse)}. ${rec.bpm0 !== null ? hrFlag({id, ...rec}).text : ""}${tf ? " " + tf.text : ""}`, true);
 }
 function hrFlag(r){
   const prior = S.hr.filter(x => x.horseId===r.horseId && x.id!==r.id && x.work===r.work && x.at < r.at);
@@ -199,16 +226,25 @@ function hrFlag(r){
   const slow = (v,a) => v!==null && v!==undefined && a!==null && v > a*1.15 && v - a >= 6;
   const wk = (WORK[r.work]||r.work).toLowerCase();
   if (slow(r.bpm20,a20) || slow(r.bpm10,a10))
-    return {level:"slow", text:`Recovering slower than ${r.horseName}'s usual for ${wk} (average ${a10!==null?Math.round(a10):"–"} at 10 min, ${a20!==null?Math.round(a20):"–"} at 20 min).`};
-  if (a10===null && a20===null) return {level:"new", text:`Log a few more ${wk} sessions to see ${r.horseName}'s normal recovery.`};
-  return {level:"ok", text:`In line with ${r.horseName}'s usual recovery.`};
+    return {level:"slow", text:`Recovering slower than ${hShort(horseById(r.horseId)) || r.horseName}'s usual for ${wk} (average ${a10!==null?Math.round(a10):"–"} at 10 min, ${a20!==null?Math.round(a20):"–"} at 20 min).`};
+  if (a10===null && a20===null) return {level:"new", text:`Log a few more ${wk} sessions to see ${hShort(horseById(r.horseId)) || r.horseName}'s normal recovery.`};
+  return {level:"ok", text:`In line with ${hShort(horseById(r.horseId)) || r.horseName}'s usual recovery.`};
+}
+/* Normal adult horse temperature is roughly 37.5\u201338.5 \u00b0C. */
+function tempFlag(t){
+  if (t === null || t === undefined) return null;
+  if (t > 38.5) return {level:"high", text:`Temperature ${t}\u00b0C is above the normal 37.5\u201338.5\u00b0C. Recheck, and call the vet if it stays high.`};
+  if (t < 37.0) return {level:"low", text:`Temperature ${t}\u00b0C is below normal. Recheck the reading.`};
+  return {level:"ok", text:`Temperature ${t}\u00b0C is normal.`};
 }
 function hrRow(r, showHorse){
-  const f = hrFlag(r);
+  const f = r.bpm0 !== null && r.bpm0 !== undefined ? hrFlag(r) : {level:"none"};
+  const tf = tempFlag(r.temp);
   const pill = f.level==="slow" ? `<span class="pill p-possible">Slow recovery</span>` : f.level==="ok" ? `<span class="pill p-sound">Normal</span>` : "";
+  const tpill = tf && tf.level === "high" ? `<span class="pill p-lame">High temp</span>` : tf && tf.level === "low" ? `<span class="pill p-possible">Low temp</span>` : "";
   return `<div class="hrrow">
-    <div><span class="d mono">${esc(fmtDate(r.at))}</span>${showHorse?` · <b>${esc(r.horseName)}</b>`:""} · ${esc(WORK[r.work]||r.work)} ${pill}</div>
-    <div class="bpm mono"><span><b>${r.bpm0 ?? "–"}</b><i>after</i></span><span><b>${r.bpm10 ?? "–"}</b><i>10 min</i></span><span><b>${r.bpm20 ?? "–"}</b><i>20 min</i></span></div>
+    <div><span class="d mono">${esc(fmtDate(r.at))}</span>${showHorse?` \u00b7 <b>${esc(hName(r.horseId, r.horseName))}</b>`:""} \u00b7 ${esc(WORK[r.work]||r.work)} ${pill} ${tpill}</div>
+    <div class="bpm mono" style="grid-template-columns:repeat(4,1fr)"><span><b>${r.bpm0 ?? "\u2013"}</b><i>after</i></span><span><b>${r.bpm10 ?? "\u2013"}</b><i>10 min</i></span><span><b>${r.bpm20 ?? "\u2013"}</b><i>20 min</i></span><span><b>${r.temp ?? "\u2013"}</b><i>temp \u00b0C</i></span></div>
     ${r.notes?`<div class="small muted">${esc(r.notes)}</div>`:""}
     ${r.by?`<div class="small muted">Entered by ${esc(r.by)}</div>`:""}
   </div>`;
@@ -218,9 +254,10 @@ function renderHrRecent(){
     : `<p class="muted small" style="margin:0">No readings yet. Saved readings show here and on each horse's page.</p>`;
 }
 function hrChart(list){
-  const rows = list.slice(0,6).reverse(); if (!rows.length) return "";
+  const rows = list.filter(r => r.bpm0 != null).slice(0,6).reverse(); if (!rows.length) return "";
   const W=320, H=150, pl=34, pr=10, pt=14, pb=24;
   const vals = rows.flatMap(r=>[r.bpm0,r.bpm10,r.bpm20]).filter(v=>v!==null && v!==undefined);
+  if (!vals.length) return "";
   const max = Math.ceil(Math.max(...vals, 60)/20)*20, min = Math.max(0, Math.floor(Math.min(...vals, 40)/20)*20);
   const step = Math.max(20, Math.ceil((max-min)/4/20)*20);
   const x = (i) => pl + i*(W-pl-pr)/2, y = (v) => pt + (max-v)*(H-pt-pb)/(max-min);
@@ -338,8 +375,22 @@ async function listModels(key){
 /* Ask Gemini. If a model is busy (503/500) it retries once, then moves on to the next free Flash model. */
 async function generate(parts, signal, onStatus){
   const key = S.settings.geminiKey;
-  const body = JSON.stringify({ contents:[{role:"user", parts}], generationConfig:{ responseMimeType:"application/json", temperature:0.2 } });
-  const call = (m) => fetch(`${GEMINI}/v1beta/models/${m}:generateContent?key=${encodeURIComponent(key)}`, {method:"POST", headers:{"Content-Type":"application/json"}, body, signal});
+  // Keep "thinking" short so answers come back quickly.
+  const bodyFor = (m, plain) => {
+    const gc = { responseMimeType:"application/json", temperature:0.2 };
+    if (!plain && /^gemini-3/.test(m)) gc.thinkingConfig = { thinkingLevel:"low" };
+    else if (!plain && /^gemini-2\.5-flash/.test(m)) gc.thinkingConfig = { thinkingBudget:1024 };
+    return JSON.stringify({ contents:[{role:"user", parts}], generationConfig:gc });
+  };
+  // Each try gives up after 2 minutes and moves on, so the app never hangs.
+  const call = async (m, plain) => {
+    const ctl = new AbortController(); const stop = () => ctl.abort();
+    signal.addEventListener("abort", stop);
+    const timer = setTimeout(stop, 120000);
+    try { return await fetch(`${GEMINI}/v1beta/models/${m}:generateContent?key=${encodeURIComponent(key)}`, {method:"POST", headers:{"Content-Type":"application/json"}, body: bodyFor(m, plain), signal: ctl.signal}); }
+    catch(e){ if (signal.aborted) throw {name:"AbortError"}; return {ok:false, status:504, timedOut:true}; }
+    finally { clearTimeout(timer); signal.removeEventListener("abort", stop); }
+  };
   const wait = (ms) => new Promise(r => setTimeout(r, ms));
   const models = [S.settings.model || DEFAULT_MODEL];
   let listed = false, lastBusy = false;
@@ -350,9 +401,14 @@ async function generate(parts, signal, onStatus){
       if (i >= models.length) break;
     }
     const model = models[i];
+    let plain = false;
     for (let attempt = 0; attempt < 2; attempt++){
       if (signal.aborted) throw {name:"AbortError"};
-      const r = await call(model);
+      const r = await call(model, plain);
+      if (r.status === 400 && !plain){
+        const t = await r.clone().text().catch(() => "");
+        if (/thinking/i.test(t)){ plain = true; attempt--; continue; }
+      }
       if (r.ok){
         const j = await r.json();
         const cand = j.candidates?.[0];
@@ -364,7 +420,8 @@ async function generate(parts, signal, onStatus){
       if (r.status === 429){ lastBusy = true; break; }               // this model's free limit is used up: try the next one
       if (r.status === 500 || r.status === 503 || r.status === 504){ // busy: wait, retry once, then move on
         lastBusy = true;
-        onStatus?.(attempt === 0 ? "Google's AI is busy. Trying again in a few seconds\u2026" : "Still busy. Trying a backup AI model\u2026");
+        onStatus?.(r.timedOut ? "That took too long. Trying a backup AI model\u2026" : attempt === 0 ? "Google's AI is busy. Trying again in a few seconds\u2026" : "Still busy. Trying a backup AI model\u2026");
+        if (r.timedOut) break;
         if (attempt === 0) await wait(5000);
         continue;
       }
@@ -423,7 +480,10 @@ function buildPrompt(horse, mode, win, nFrames){
     (c.result?.limbs||[]).filter(l=>l.level!=="none").map(l=>`${l.limb} ${l.level}`).join(", ") + `. ${c.result?.summary||""}`).join("\n");
   const since = new Date(Date.now() - 3*864e5).toISOString();
   const hrs = S.hr.filter(r => r.horseId===horse.id && r.at >= since).slice(0,3).map(r =>
-    `- ${r.at.slice(0,16).replace("T"," ")} ${WORK[r.work]||r.work}: ${r.bpm0 ?? "?"} bpm after, ${r.bpm10 ?? "?"} at 10 min, ${r.bpm20 ?? "?"} at 20 min. ${hrFlag(r).text}`).join("\n");
+    `- ${r.at.slice(0,16).replace("T"," ")} ${WORK[r.work]||r.work}: ${r.bpm0 ?? "?"} bpm after, ${r.bpm10 ?? "?"} at 10 min, ${r.bpm20 ?? "?"} at 20 min${r.temp != null ? `, temperature ${r.temp}\u00b0C` : ""}. ${r.bpm0 != null ? hrFlag(r).text : ""}`).join("\n");
+  const wk7 = addDays(todayStr(), -7);
+  const work = S.diary.filter(e => e.horseId===horse.id && e.date >= wk7).slice(0,10).map(e =>
+    `- ${e.date} ${DTYPE[e.type]||e.type}${e.distance ? ": " + e.distance : ""}${e.times ? "; " + e.times : ""}${e.type==="farrier" ? `; ${SHOEWORK[e.shoeWork]||""} ${e.shoeType||""}` : ""}${e.notes ? "; " + e.notes : ""}`).join("\n");
   const gaitNote = horse.gait === "trotter"
     ? "This horse is a TROTTER (diagonal gait: LF+RH land together, RF+LH land together)."
     : "This horse is a PACER (lateral gait: LF+LH land together, RF+RH land together). In the pace the classic head nod is harder to read because a fore and hind on the SAME side bear weight together; lean more on hip/pelvic movement, stride length, fetlock drop, and head/neck movement relative to each lateral pair. Also note if the horse breaks gait.";
@@ -432,12 +492,13 @@ function buildPrompt(horse, mode, win, nFrames){
     : `You are given the video, limited to the section from ${win.start.toFixed(1)}s to ${(win.start+win.len).toFixed(1)}s. Watch the movement through several strides. In "observations", set "when" to timestamps within the video like "0:12–0:14".`;
   return `You are an experienced equine veterinarian specialising in lameness in Standardbred harness racing horses. Assess this horse for lameness from phone footage.
 
-HORSE: ${horse.name}. ${gaitNote}${horse.notes ? " Owner notes about the horse: " + horse.notes : ""}
+HORSE: race name ${horse.name}${horse.stableName ? ` (stable name ${horse.stableName})` : ""}. ${gaitNote}${horse.notes ? " Owner notes about the horse: " + horse.notes : ""}
 CAMERA VIEW: ${FOOTAGE[footage]}. PACE: ${pace}.${dir ? " LUNGING ON THE " + dir.toUpperCase() + " REIN." : ""} SURFACE: ${surf}.
 FOOTAGE: ${media}
 ${notes ? "OWNER'S OBSERVATIONS TODAY: " + notes : "No owner observations given."}
 ${prev ? "PREVIOUS CHECKS ON THIS HORSE (for comparison; do not assume they are still true):\n" + prev : ""}
-${hrs ? "HEART RATE RECOVERY IN THE LAST 3 DAYS (context only; mention it if a slow recovery supports or adds to concern):\n" + hrs : ""}
+${work ? "WORK DIARY, LAST 7 DAYS (context only):\n" + work : ""}
+${hrs ? "HEART RATE AND TEMPERATURE IN THE LAST 3 DAYS (context only; mention it if a slow recovery or a raised temperature supports or adds to concern):\n" + hrs : ""}
 
 How to assess:
 1. Work out which limbs are in stance (weight-bearing) at each moment, and identify the gait actually shown.
@@ -460,7 +521,10 @@ async function analyse(){
   if (!horse || !S.file || !S.settings.geminiKey) return;
   alertBox("checkError",""); $("reportOut").innerHTML = ""; $("stripBox").hidden = true;
   $("analyseBtn").disabled = true; $("status").hidden = false; $("progBar").hidden = true;
-  const setStatus = (t) => $("statusText").textContent = t;
+  const t0 = Date.now(); let stage = "";
+  const showStatus = () => { $("statusText").textContent = `${stage} (${Math.round((Date.now()-t0)/1000)}s)`; };
+  const setStatus = (t) => { stage = t; showStatus(); };
+  const ticker = setInterval(showStatus, 1000);
   const setProg = (p) => { $("progBar").hidden = p === null; $("progFill").style.width = Math.round((p||0)*100) + "%"; };
   S.ctl = new AbortController(); const signal = S.ctl.signal;
   const win = segWindow(); const mime = videoMime(S.file);
@@ -469,7 +533,7 @@ async function analyse(){
     setStatus("Taking snapshots for the record…");
     const snaps = await grabFrames(4, 480, false);
     const thumbs = snaps.map(s => thumb(s.c));
-    const vm = { startOffset: win.start.toFixed(2)+"s", endOffset: (win.start+win.len).toFixed(2)+"s", fps: win.len <= 10 ? 10 : 5 };
+    const vm = { startOffset: win.start.toFixed(2)+"s", endOffset: (win.start+win.len).toFixed(2)+"s", fps: win.len <= 6 ? 6 : win.len <= 10 ? 4 : 2 };
     let mode = "video", parts, nFrames = 0;
     if (S.file.size <= INLINE_MAX){
       setStatus("Preparing the video…");
@@ -495,7 +559,7 @@ async function analyse(){
     }
     if (signal.aborted) throw {name:"AbortError"};
     parts.push({ text: buildPrompt(horse, mode, win, nFrames) });
-    setStatus("The AI is watching the horse move… this usually takes 20–90 seconds.");
+    setStatus("The AI is watching the horse move\u2026 usually 20\u201360 seconds");
     const {json, model} = await generate(parts, signal, setStatus);
     const check = {
       horseId: horse.id, horseName: horse.name, horseGait: horse.gait,
@@ -506,13 +570,14 @@ async function analyse(){
       by: S.me?.displayName || S.me?.email || ""
     };
     $("reportOut").innerHTML = reportHTML(check);
-    try{ await save("checks", uid("c"), check); addSaved(`Saved to ${horse.name}'s history.`); }
+    try{ await save("checks", uid("c"), check); addSaved(`Saved to ${hShort(horse)}'s history.`); }
     catch(err){ addSaved(saveErrMsg(err)); }
     $("notes").value = "";
     $("reportOut").scrollIntoView({behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth", block:"start"});
   }catch(e){
     if (e?.name !== "AbortError") alertBox("checkError", e?.message || "Something went wrong. Tap Analyse gait to try again.");
   }finally{
+    clearInterval(ticker);
     dropUploaded(uploaded);
     $("status").hidden = true; updateAnalyseBtn();
   }
@@ -560,7 +625,7 @@ function reportHTML(c, opts={}){
   const win = c.window ? ` · ${c.window.start}s–${(c.window.start+c.window.len).toFixed(1)}s` : "";
   return `<div class="report card${c.example?" is-example":""}">
     ${c.example ? `<div><span class="pill p-example">Example report</span> <span class="small muted">What a result looks like. Not one of your horses.</span></div>` : ""}
-    <div><h2>${esc(c.horseName)}</h2>
+    <div><h2>${esc(c.horseId ? hName(c.horseId, c.horseName) : c.horseName)}</h2>
       <div class="meta"><span>${fmtDate(c.createdAt)}${c.by?` · by ${esc(c.by)}`:""}</span><span>${esc(FOOTAGE[c.footage]||c.footage)}</span><span class="mono">${src}${win}</span></div></div>
     <div class="verdict v-${r.verdict}">
       <span class="big">${VERDICT[r.verdict]}</span>
@@ -588,39 +653,125 @@ function renderLatestOrExample(){
   else if (S.checks.length && out.querySelector(".is-example")) out.innerHTML = "";
 }
 
+/* ================= work diary ================= */
+function resetDiaryForm(keepHorse){
+  const h = keepHorse ? $("dHorse").value : $("dHorse").value;
+  ["dDistance","dTimes","dDriver","dNotes","dFarrier","dShoeType"].forEach(i => $(i).value = "");
+  $("dDate").value = todayStr();
+  $("dNextDue").value = ""; delete $("dNextDue").dataset.touched;
+  $("dShoeWork").value = "full";
+  if (h) $("dHorse").value = h;
+  syncDiaryFields();
+}
+function syncDiaryFields(){
+  const t = $("dType").value, farrier = t === "farrier", rest = t === "rest" || t === "paddock";
+  $("dFarrierFields").hidden = !farrier;
+  $("dWorkFields").hidden = farrier || rest;
+  if (farrier && !$("dNextDue").value) $("dNextDue").value = addDays($("dDate").value || todayStr(), 35);
+}
+async function saveDiary(e){
+  e.preventDefault();
+  const horse = horseById($("dHorse").value);
+  if (!horse){ msg("dMsg","Choose a horse first.", false); return; }
+  const type = $("dType").value, farrier = type === "farrier";
+  const rec = {
+    horseId: horse.id, horseName: horse.name, date: $("dDate").value || todayStr(), type,
+    distance: farrier ? "" : $("dDistance").value.trim(), times: farrier ? "" : $("dTimes").value.trim(),
+    driver: $("dDriver").value.trim(), notes: $("dNotes").value.trim(),
+    farrier: farrier ? $("dFarrier").value.trim() : "", shoeWork: farrier ? $("dShoeWork").value : "",
+    shoeType: farrier ? $("dShoeType").value.trim() : "", nextDue: farrier ? ($("dNextDue").value || "") : "",
+    createdAt: new Date().toISOString(), by: S.me?.displayName || S.me?.email || ""
+  };
+  try{ await save("diary", uid("d"), rec); }catch(err){ msg("dMsg", saveErrMsg(err), false); return; }
+  msg("dMsg", `Saved ${DTYPE[type].toLowerCase()} for ${hShort(horse)} on ${fmtDay(rec.date)}.`, true);
+  resetDiaryForm(true);
+}
+function diaryDetail(e){
+  if (e.type === "farrier"){
+    return [SHOEWORK[e.shoeWork], e.shoeType, e.farrier ? `by ${e.farrier}` : "", e.nextDue ? `next due ${fmtDay(e.nextDue)}` : ""].filter(Boolean).join(" · ");
+  }
+  return [e.distance, e.times, e.driver ? `driven by ${e.driver}` : ""].filter(Boolean).join(" · ");
+}
+function diaryRow(e, showHorse, delKey){
+  const det = diaryDetail(e);
+  return `<div class="hrrow">
+    <div><span class="d mono">${esc(fmtDay(e.date))}</span>${showHorse ? ` · <b>${esc(hName(e.horseId, e.horseName))}</b>` : ""} <span class="pill ${e.type==="farrier" ? "p-example" : e.type==="rest" ? "p-unclear" : "p-sound"}">${esc(DTYPE[e.type]||e.type)}</span></div>
+    ${det ? `<div>${esc(det)}</div>` : ""}
+    ${e.notes ? `<div class="small muted">${esc(e.notes)}</div>` : ""}
+    ${e.by ? `<div class="small muted">Entered by ${esc(e.by)}</div>` : ""}
+    ${delKey ? `<div class="confirm" data-ddelwrap="${esc(delKey)}${esc(e.id)}"><button class="link small" type="button" data-ddel="${esc(e.id)}" data-dkey="${esc(delKey)}">Delete entry</button></div>` : ""}
+  </div>`;
+}
+function bindDiaryDeletes(root, key, after){
+  root.querySelectorAll(`[data-ddel][data-dkey="${key}"]`).forEach(b => b.onclick = () => {
+    confirmIn(root.querySelector(`[data-ddelwrap="${key}${b.dataset.ddel}"]`), "Delete this diary entry?", async () => {
+      try{ await remove("diary", b.dataset.ddel); }catch(err){ alertBox("storeNote", saveErrMsg(err)); }
+    }, after);
+  });
+}
+function renderDiaryRecent(){
+  const box = $("dRecent"); if (!box) return;
+  const since = addDays(todayStr(), -14);
+  const list = S.diary.filter(e => e.date >= since).slice(0, 60);
+  if (!list.length){ box.innerHTML = `<p class="muted small" style="margin:0">Nothing in the last two weeks yet. Entries you save show here and on each horse's page.</p>`; return; }
+  let html = "", day = "";
+  for (const e of list){
+    if (e.date !== day){ day = e.date; html += `<h3 style="margin:10px 0 0;font-size:16px">${esc(fmtDay(day))}${day===todayStr()?" · Today":""}</h3>`; }
+    html += diaryRow(e, true, "r");
+  }
+  box.innerHTML = html;
+  bindDiaryDeletes(box, "r", renderDiaryRecent);
+}
+function shoeStatus(horseId){
+  const last = S.diary.find(e => e.horseId === horseId && e.type === "farrier");
+  if (!last) return null;
+  const t = todayStr(), due = last.nextDue;
+  let level = "ok";
+  if (due && due < t) level = "overdue"; else if (due && due <= addDays(t, 7)) level = "soon";
+  return {last, due, level};
+}
+function lastWorked(horseId){ return S.diary.find(e => e.horseId === horseId && !["rest","farrier","vet"].includes(e.type)); }
+
 /* ================= horses ================= */
 function renderHorses(){
   const box = $("horsesList"), top = [$("horsesTop"), $("hAddHorseSlot")];
   if (S.openHorse){ box.hidden = true; top.forEach(e=>e.hidden=true); renderHorseDetail(); return; }
   box.hidden = false; top.forEach(e=>e.hidden=false); $("horseDetail").hidden = true;
   if (!S.horses.length){
-    box.innerHTML = `<div class="card"><h3>No horses yet</h3><p class="muted" style="margin:0">Tap <b>+ Add horse</b> to start. Gait checks and heart rates are saved to each horse so you can see how it's tracking.</p></div>`;
+    box.innerHTML = `<div class="card"><h3>No horses yet</h3><p class="muted" style="margin:0">Tap <b>+ Add horse</b> to start. Work diary, gait checks, heart rates and shoeing are all saved to each horse.</p></div>`;
     return;
   }
   const q = $("horseSearch").value.trim().toLowerCase();
-  const list = q ? S.horses.filter(h => h.name.toLowerCase().includes(q)) : S.horses;
+  const list = q ? S.horses.filter(h => String(h.name||"").toLowerCase().includes(q) || String(h.stableName||"").toLowerCase().includes(q)) : S.horses;
   if (!list.length){ box.innerHTML = `<p class="muted">No horse matches “${esc(q)}”.</p>`; return; }
   box.innerHTML = `<div class="horse-list">${list.map(h => {
     const hc = S.checks.filter(c=>c.horseId===h.id), last = hc[0];
     const hh = S.hr.filter(r=>r.horseId===h.id), lastHr = hh[0];
-    const slow = lastHr && hrFlag(lastHr).level==="slow";
+    const slow = lastHr && lastHr.bpm0 != null && hrFlag(lastHr).level==="slow";
+    const hot = lastHr && tempFlag(lastHr.temp)?.level === "high";
+    const shoe = shoeStatus(h.id), lw = lastWorked(h.id);
+    const sub = [h.stableName && h.stableName.toLowerCase() !== String(h.name).toLowerCase() ? h.name : "", h.gait==="trotter"?"Trotter":"Pacer",
+      lw ? `last worked ${fmtDay(lw.date)}` : "", shoe?.due ? `shoeing due ${fmtDay(shoe.due)}` : ""].filter(Boolean).join(" · ");
     return `<button class="horse" type="button" data-horse="${esc(h.id)}">
-      <span class="nm">${esc(h.name)}</span>
-      ${last?`<span class="pill p-${last.result.verdict}">${VERDICT[last.result.verdict]}</span>`:`<span class="pill p-unclear">No gait checks</span>`}
-      <span class="sm">${h.gait==="trotter"?"Trotter":"Pacer"} · ${hc.length} gait check${hc.length===1?"":"s"} · ${hh.length} heart rate${hh.length===1?"":"s"}${last?` · last check ${fmtDate(last.createdAt).split(",")[0]}`:""}</span>
-      ${slow?`<span class="pill p-possible">Slow HR recovery</span>`:""}
+      <span class="nm">${esc(hShort(h))}</span>
+      ${last?`<span class="pill p-${last.result.verdict}">${VERDICT[last.result.verdict]}</span>`:"<span></span>"}
+      <span class="sm">${esc(sub)}</span>
+      <span>${shoe?.level==="overdue"?`<span class="pill p-lame">Shoeing overdue</span> `:shoe?.level==="soon"?`<span class="pill p-possible">Shoeing due soon</span> `:""}${slow?`<span class="pill p-possible">Slow HR recovery</span> `:""}${hot?`<span class="pill p-lame">High temp</span>`:""}</span>
     </button>`;}).join("")}</div>`;
-  box.querySelectorAll("[data-horse]").forEach(b => b.onclick = () => { S.openHorse = b.dataset.horse; S.openCheck = null; renderHorses(); window.scrollTo(0,0); });
+  box.querySelectorAll("[data-horse]").forEach(b => b.onclick = () => { S.openHorse = b.dataset.horse; S.openCheck = null; S.editHorse = false; S.showAllDiary = false; renderHorses(); window.scrollTo(0,0); });
+}
+function openDiaryFor(h, type){
+  $("dHorse").value = h.id; $("dType").value = type || "jog"; resetDiaryForm(true); msg("dMsg","",true); showTab("diary");
 }
 function renderHorseDetail(){
   const d = $("horseDetail"); d.hidden = false;
-  const h = S.horses.find(x=>x.id===S.openHorse);
+  const h = horseById(S.openHorse);
   if (!h){ S.openHorse = null; renderHorses(); return; }
-  const hc = S.checks.filter(c=>c.horseId===h.id), hh = S.hr.filter(r=>r.horseId===h.id);
+  const hc = S.checks.filter(c=>c.horseId===h.id), hh = S.hr.filter(r=>r.horseId===h.id), hd = S.diary.filter(e=>e.horseId===h.id);
   if (S.openCheck){
     const c = hc.find(x=>x.id===S.openCheck);
     if (c){
-      d.innerHTML = `<button class="link" type="button" id="backH">← ${esc(h.name)}</button>` + reportHTML(c,{deletable:true});
+      d.innerHTML = `<button class="link" type="button" id="backH">← ${esc(hShort(h))}</button>` + reportHTML(c,{deletable:true});
       $("backH").onclick = () => { S.openCheck = null; renderHorseDetail(); };
       d.querySelector("[data-del]").onclick = () => confirmIn($("delWrap"), "Delete this check for good?", async () => {
         try{ await remove("checks", c.id); S.openCheck = null; renderHorseDetail(); }catch(err){ alertBox("storeNote", saveErrMsg(err)); }
@@ -630,44 +781,99 @@ function renderHorseDetail(){
     S.openCheck = null;
   }
   const graded = hc.filter(c=>c.result.grade!==null).slice(0,20).reverse();
+  const shoe = shoeStatus(h.id);
+  const shoes = hd.filter(e => e.type === "farrier");
+  const work = hd.filter(e => e.type !== "farrier");
+  const shown = S.showAllDiary ? work : work.slice(0, 15);
+  const showRace = h.stableName && h.stableName.toLowerCase() !== String(h.name).toLowerCase();
   d.innerHTML = `<button class="link" type="button" id="backAll">← All horses</button>
     <div class="card">
-      <div><span class="eyebrow">${h.gait==="trotter"?"Trotter":"Pacer"}</span><h2>${esc(h.name)}</h2>${h.notes?`<p class="muted small" style="margin:4px 0 0">${esc(h.notes)}</p>`:""}</div>
-      ${graded.length>1?`<div><p class="small muted" style="margin:0">Grade over the last ${graded.length} checks (oldest to newest, 0–5)</p><div class="trend">${graded.map(c=>`<span title="${esc(fmtDate(c.createdAt))}: grade ${c.result.grade}" style="height:${6+c.result.grade*8}px"></span>`).join("")}</div></div>`:""}
-      <div class="row"><button class="btn primary" type="button" id="checkThis">New gait check</button><button class="btn" type="button" id="hrThis">Log heart rate</button></div>
+      <div><span class="eyebrow">${h.gait==="trotter"?"Trotter":"Pacer"}</span><h2>${esc(hShort(h))}</h2>
+        ${showRace?`<p class="small" style="margin:4px 0 0">Race name: <b>${esc(h.name)}</b></p>`:""}
+        ${h.notes?`<p class="muted small" style="margin:4px 0 0">${esc(h.notes)}</p>`:""}</div>
+      ${graded.length>1?`<div><p class="small muted" style="margin:0">Gait grade over the last ${graded.length} checks (oldest to newest, 0–5)</p><div class="trend">${graded.map(c=>`<span title="${esc(fmtDate(c.createdAt))}: grade ${c.result.grade}" style="height:${6+c.result.grade*8}px"></span>`).join("")}</div></div>`:""}
+      <div class="row">
+        <button class="btn primary" type="button" id="diaryThis">+ Diary entry</button>
+        <button class="btn" type="button" id="checkThis">Gait check</button>
+        <button class="btn" type="button" id="hrThis">HR &amp; temp</button>
+        <button class="btn" type="button" id="editThis">Edit horse</button>
+      </div>
+      <form class="seg" id="editForm" ${S.editHorse?"":"hidden"}>
+        <div class="row">
+          <div class="field"><label for="eName">Race name</label><input id="eName" type="text" required value="${esc(h.name)}"></div>
+          <div class="field"><label for="eStable">Stable name</label><input id="eStable" type="text" value="${esc(h.stableName||"")}" placeholder="What you call them"></div>
+        </div>
+        <div class="row">
+          <div class="field"><label for="eGait">Gait</label><select id="eGait"><option value="pacer"${h.gait!=="trotter"?" selected":""}>Pacer</option><option value="trotter"${h.gait==="trotter"?" selected":""}>Trotter</option></select></div>
+        </div>
+        <div class="field"><label for="eNotes">Notes</label><input id="eNotes" type="text" value="${esc(h.notes||"")}" placeholder="Age, known issues, shoeing…"></div>
+        <div class="row"><button class="btn primary" type="submit">Save changes</button><button class="btn" type="button" id="eCancel">Cancel</button></div>
+        <div class="small" id="eMsg" hidden></div>
+        <div class="confirm" id="delHWrap" style="margin-top:6px"><button class="link" type="button" id="delHorse">Delete ${esc(hShort(h))} and all their records</button></div>
+      </form>
     </div>
-    <div class="card"><h3>Heart rate recovery</h3>
+
+    <div class="card"><div class="topline"><h3>Shoeing</h3><button class="link" type="button" id="shoeThis">+ Record shoeing</button></div>
+      ${shoe ? `<div class="kv"><dt>Last shod</dt><dd>${esc(fmtDay(shoe.last.date))}${shoe.last.farrier?` by ${esc(shoe.last.farrier)}`:""}</dd>
+        <dt>Work done</dt><dd>${esc([SHOEWORK[shoe.last.shoeWork], shoe.last.shoeType].filter(Boolean).join(" · ") || "–")}</dd>
+        <dt>Next due</dt><dd>${shoe.due ? esc(fmtDay(shoe.due)) : "Not set"} ${shoe.level==="overdue"?`<span class="pill p-lame">Overdue</span>`:shoe.level==="soon"?`<span class="pill p-possible">Due soon</span>`:""}</dd></div>
+        ${shoes.length>1?`<details><summary class="small">Shoeing history (${shoes.length})</summary><div class="history" style="margin-top:8px">${shoes.map(e=>diaryRow(e,false,"s")).join("")}</div></details>`:`<div class="history">${diaryRow(shoe.last,false,"s")}</div>`}`
+        : `<p class="muted small" style="margin:0">No shoeing recorded yet.</p>`}
+    </div>
+
+    <div class="card"><div class="topline"><h3>Work diary</h3><button class="link" type="button" id="diaryThis2">+ Add entry</button></div>
+      ${work.length ? `<div class="history">${shown.map(e=>diaryRow(e,false,"w")).join("")}</div>
+        ${work.length>15?`<button class="link" type="button" id="diaryMore">${S.showAllDiary?"Show fewer":`Show all ${work.length} entries`}</button>`:""}`
+        : `<p class="muted small" style="margin:0">No work recorded yet.</p>`}
+    </div>
+
+    <div class="card"><h3>Heart rate &amp; temperature</h3>
       ${hh.length ? hrChart(hh) + `<div class="history">${hh.slice(0,12).map(r=>hrRow(r,false) + `<div class="confirm" data-hrdelwrap="${esc(r.id)}"><button class="link small" type="button" data-hrdel="${esc(r.id)}">Delete reading</button></div>`).join("")}</div>${hh.length>12?`<p class="small muted" style="margin:0">Showing the latest 12 of ${hh.length}.</p>`:""}`
-        : `<p class="muted small" style="margin:0">No heart rates logged yet.</p>`}
+        : `<p class="muted small" style="margin:0">No heart rates or temperatures logged yet.</p>`}
     </div>
+
     <h3>Gait check history</h3>
     <div class="history">${hc.length ? hc.map(c=>`<button class="hist" type="button" data-check="${esc(c.id)}">
         ${c.thumbs?.[1]?`<img src="${esc(c.thumbs[1])}" alt="">`:`<img alt="">`}
         <span><span class="d">${esc(fmtDate(c.createdAt))}</span><br><span class="t">${esc(FOOTAGE[c.footage]||c.footage)} · <span class="pill p-${c.result.verdict}">${VERDICT[c.result.verdict]}${c.result.grade!==null?" · "+c.result.grade+"/5":""}</span></span></span>
         <span class="minilimbs" aria-label="Legs">${["LF","RF","LH","RH"].map(k=>`<span class="${c.result.limbs.find(l=>l.limb===k)?.level||"none"}"></span>`).join("")}</span>
-      </button>`).join("") : `<p class="muted">No gait checks yet for ${esc(h.name)}.</p>`}</div>
-    <div class="confirm" id="delHWrap"><button class="link" type="button" id="delHorse">Remove ${esc(h.name)} and its history</button></div>`;
-  $("backAll").onclick = () => { S.openHorse = null; renderHorses(); };
+      </button>`).join("") : `<p class="muted">No gait checks yet for ${esc(hShort(h))}.</p>`}</div>`;
+  $("backAll").onclick = () => { S.openHorse = null; S.editHorse = false; renderHorses(); };
+  $("diaryThis").onclick = $("diaryThis2").onclick = () => openDiaryFor(h, "jog");
+  $("shoeThis").onclick = () => openDiaryFor(h, "farrier");
   $("checkThis").onclick = () => { $("horseSel").value = h.id; updateAnalyseBtn(); showTab("check"); };
   $("hrThis").onclick = () => { $("hrHorse").value = h.id; msg("hrMsg","",true); showTab("hr"); };
+  $("editThis").onclick = () => { S.editHorse = !S.editHorse; $("editForm").hidden = !S.editHorse; if (S.editHorse) $("eName").focus(); };
+  $("eCancel").onclick = () => { S.editHorse = false; renderHorseDetail(); };
+  $("editForm").onsubmit = async (e) => {
+    e.preventDefault();
+    const name = $("eName").value.trim(); if (!name) return;
+    if (S.horses.some(x => x.id !== h.id && String(x.name).toLowerCase() === name.toLowerCase())){ msg("eMsg", `${name} is already in the list.`, false); return; }
+    const {id, ...rest} = h;
+    try{ await save("horses", h.id, {...rest, name, stableName:$("eStable").value.trim(), gait:$("eGait").value, notes:$("eNotes").value.trim(), updatedAt:new Date().toISOString()}); S.editHorse = false; }
+    catch(err){ msg("eMsg", saveErrMsg(err), false); }
+  };
+  if ($("diaryMore")) $("diaryMore").onclick = () => { S.showAllDiary = !S.showAllDiary; renderHorseDetail(); };
+  bindDiaryDeletes(d, "w"); bindDiaryDeletes(d, "s");
   d.querySelectorAll("[data-check]").forEach(b => b.onclick = () => { S.openCheck = b.dataset.check; renderHorseDetail(); window.scrollTo(0,0); });
   d.querySelectorAll("[data-hrdel]").forEach(b => b.onclick = () => {
     confirmIn(d.querySelector(`[data-hrdelwrap="${b.dataset.hrdel}"]`), "Delete this reading?", async () => {
       try{ await remove("hr", b.dataset.hrdel); }catch(err){ alertBox("storeNote", saveErrMsg(err)); }
     });
   });
-  $("delHorse").onclick = () => confirmIn($("delHWrap"), `Remove ${h.name}, ${hc.length} gait checks and ${hh.length} heart rates?`, async () => {
+  $("delHorse").onclick = () => confirmIn($("delHWrap"), `Delete ${hShort(h)}? This also deletes ${hd.length} diary entries, ${hc.length} gait checks and ${hh.length} heart-rate readings, and can't be undone.`, async () => {
     try{
       for (const c of hc) await remove("checks", c.id);
       for (const r of hh) await remove("hr", r.id);
+      for (const e of hd) await remove("diary", e.id);
       await remove("horses", h.id);
-      S.openHorse = null; renderHorses();
+      S.openHorse = null; S.editHorse = false; renderHorses();
     }catch(err){ alertBox("storeNote", saveErrMsg(err)); }
   });
 }
-function confirmIn(wrap, q, yes){
+function confirmIn(wrap, q, yes, onCancel){
   wrap.innerHTML = `<span>${esc(q)}</span><button class="btn primary" type="button">Yes, delete</button><button class="btn" type="button">Cancel</button>`;
-  const [y,n] = wrap.querySelectorAll("button"); y.onclick = yes; n.onclick = () => renderHorseDetail();
+  const [y,n] = wrap.querySelectorAll("button"); y.onclick = yes; n.onclick = onCancel || (() => renderHorseDetail());
 }
 
 boot();
