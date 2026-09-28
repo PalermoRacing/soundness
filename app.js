@@ -321,32 +321,59 @@ async function apiErrText(r){
   let j = null; try { j = await r.json(); } catch(_){}
   const m = j?.error?.message || r.statusText;
   if (r.status === 429) return "The free Gemini limit has been reached for now. Wait a minute and try again (or try tomorrow if it keeps happening).";
+  if (r.status === 503 || r.status === 500) return "Google's free AI is very busy right now. Wait a few minutes and try again.";
   if (r.status === 400 && /API key/i.test(m)) return "The Gemini API key isn't valid. Check it in Settings.";
   if (r.status === 403) return "Google refused the request. If you restricted the key, check that this web address is allowed (setup guide, step 5). Details: " + m;
   return `Gemini error ${r.status}: ${m}`;
 }
-async function pickModel(key){
+async function listModels(key){
   const r = await fetch(`${GEMINI}/v1beta/models?key=${encodeURIComponent(key)}&pageSize=200`);
   if (!r.ok) throw new Error(await apiErrText(r));
   const names = ((await r.json()).models||[]).filter(m => (m.supportedGenerationMethods||[]).includes("generateContent"))
-    .map(m => m.name.replace("models/","")).filter(n => /^gemini-[\d.]+-flash/.test(n) && !/(lite|image|tts|live|audio|thinking-exp)/.test(n));
-  names.sort((a,b) => parseFloat(b.split("-")[1]) - parseFloat(a.split("-")[1]));
-  if (!names.length) throw new Error("No suitable Gemini model is available on this key.");
-  return names[0];
+    .map(m => m.name.replace("models/","")).filter(n => /^gemini-[\d.]+-flash/.test(n) && !/(image|tts|live|audio|thinking-exp)/.test(n));
+  const ver = (n) => parseFloat(n.split("-")[1]) || 0;
+  names.sort((a,b) => (/lite/.test(a) - /lite/.test(b)) || (ver(b) - ver(a)));
+  return names;
 }
-async function generate(parts, signal){
+/* Ask Gemini. If a model is busy (503/500) it retries once, then moves on to the next free Flash model. */
+async function generate(parts, signal, onStatus){
   const key = S.settings.geminiKey;
-  let model = S.settings.model || DEFAULT_MODEL;
   const body = JSON.stringify({ contents:[{role:"user", parts}], generationConfig:{ responseMimeType:"application/json", temperature:0.2 } });
   const call = (m) => fetch(`${GEMINI}/v1beta/models/${m}:generateContent?key=${encodeURIComponent(key)}`, {method:"POST", headers:{"Content-Type":"application/json"}, body, signal});
-  let r = await call(model);
-  if (r.status === 404){ model = await pickModel(key); r = await call(model); }
-  if (!r.ok) throw new Error(await apiErrText(r));
-  const j = await r.json();
-  const cand = j.candidates?.[0];
-  if (!cand) throw new Error(j.promptFeedback?.blockReason ? "Gemini declined to analyse this clip. Try a different section." : "Gemini returned no answer. Try again.");
-  const text = (cand.content?.parts||[]).filter(p => !p.thought && p.text).map(p => p.text).join("");
-  return {json: parseJSON(text), model};
+  const wait = (ms) => new Promise(r => setTimeout(r, ms));
+  const models = [S.settings.model || DEFAULT_MODEL];
+  let listed = false, lastBusy = false;
+  for (let i = 0; i < models.length || !listed; i++){
+    if (i >= models.length){
+      listed = true;
+      try { (await listModels(key)).forEach(m => { if (!models.includes(m) && models.length < 5) models.push(m); }); } catch(_){}
+      if (i >= models.length) break;
+    }
+    const model = models[i];
+    for (let attempt = 0; attempt < 2; attempt++){
+      if (signal.aborted) throw {name:"AbortError"};
+      const r = await call(model);
+      if (r.ok){
+        const j = await r.json();
+        const cand = j.candidates?.[0];
+        if (!cand) throw new Error(j.promptFeedback?.blockReason ? "Gemini declined to analyse this clip. Try a different section." : "Gemini returned no answer. Try again.");
+        const text = (cand.content?.parts||[]).filter(p => !p.thought && p.text).map(p => p.text).join("");
+        return {json: parseJSON(text), model};
+      }
+      if (r.status === 404) break;                                   // model not available: try the next one
+      if (r.status === 429){ lastBusy = true; break; }               // this model's free limit is used up: try the next one
+      if (r.status === 500 || r.status === 503 || r.status === 504){ // busy: wait, retry once, then move on
+        lastBusy = true;
+        onStatus?.(attempt === 0 ? "Google's AI is busy. Trying again in a few seconds\u2026" : "Still busy. Trying a backup AI model\u2026");
+        if (attempt === 0) await wait(5000);
+        continue;
+      }
+      throw new Error(await apiErrText(r));
+    }
+  }
+  throw new Error(lastBusy
+    ? "Google's free AI is very busy right now. Wait a few minutes, then tap Analyse gait again."
+    : "No suitable Gemini model is available on this key. Check Settings.");
 }
 function parseJSON(t){
   try { return JSON.parse(t); } catch(_){}
@@ -469,7 +496,7 @@ async function analyse(){
     if (signal.aborted) throw {name:"AbortError"};
     parts.push({ text: buildPrompt(horse, mode, win, nFrames) });
     setStatus("The AI is watching the horse move… this usually takes 20–90 seconds.");
-    const {json, model} = await generate(parts, signal);
+    const {json, model} = await generate(parts, signal, setStatus);
     const check = {
       horseId: horse.id, horseName: horse.name, horseGait: horse.gait,
       footage: $("footage").value, pace: $("pace").value, lungeDir: $("lungeDir").value, surface: $("surface").value,
