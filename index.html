@@ -44,7 +44,6 @@
   <main id="appView" hidden>
   <nav class="tabs" role="tablist" style="overflow-x:auto">
     <button role="tab" aria-selected="true" data-tab="diary">Diary</button>
-    <button role="tab" aria-selected="false" data-tab="hr">HR</button>
     <button role="tab" aria-selected="false" data-tab="temp">Temp</button>
     <button role="tab" aria-selected="false" data-tab="check">Gait</button>
     <button role="tab" aria-selected="false" data-tab="horses">Horses</button>
@@ -191,35 +190,6 @@
 
     <div id="reportOut"></div>
     <button class="link" type="button" id="goGuide" style="align-self:center">Filming tips</button>
-  </section>
-
-  <!-- HEART RATE -->
-  <section class="panel" id="panel-hr" hidden>
-    <div class="card">
-      <div><h2>Heart rate</h2><p class="muted small" style="margin:4px 0 0">Take the heart rate 10 and 20 minutes after work. You can also enter it with the work in the Diary. A horse recovering slower than its usual can be an early sign of soreness, illness or fatigue.</p></div>
-      <div class="row">
-        <div class="field"><label for="hrHorse">Horse</label><select id="hrHorse"></select></div>
-        <button class="btn" id="hrAddHorseBtn" type="button">+ Add horse</button>
-      </div>
-      <div id="hrAddHorseSlot"></div>
-      <form id="hrForm" style="display:flex;flex-direction:column;gap:12px">
-      <div class="row">
-        <div class="field"><label for="hrWhen">Date of work</label><input id="hrWhen" type="date" required></div>
-        <div class="field"><label for="hrWork">Work</label>
-          <select id="hrWork"><option value="jog">Jog</option><option value="fast">Fast work</option><option value="heats">Heats</option><option value="trial">Trial</option><option value="race">Race</option></select></div>
-      </div>
-      <div class="row">
-        <div class="field"><label for="hr10">After 10 min (bpm)</label><input id="hr10" type="number" inputmode="numeric" min="20" max="260" placeholder="e.g. 92"></div>
-        <div class="field"><label for="hr20">After 20 min (bpm)</label><input id="hr20" type="number" inputmode="numeric" min="20" max="260" placeholder="e.g. 60"></div>
-      </div>
-      <button class="btn primary big" type="submit">Save heart rate</button>
-      <div id="hrMsg" class="small" hidden></div>
-      </form>
-    </div>
-    <div>
-      <h3 style="margin-bottom:8px">Latest readings</h3>
-      <div id="hrRecent" class="history"></div>
-    </div>
   </section>
 
   <!-- TEMPERATURE -->

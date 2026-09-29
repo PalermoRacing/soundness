@@ -124,7 +124,7 @@ function saveErrMsg(err){
 function showTab(t){
   if (t === "settings"){ const cur = document.querySelector('nav.tabs [aria-selected="true"]'); S.prevTab = cur?.dataset.tab || "diary"; }
   document.querySelectorAll("nav.tabs button").forEach(b => b.setAttribute("aria-selected", String(b.dataset.tab===t)));
-  ["diary","hr","temp","check","horses","guide","settings"].forEach(p => $("panel-"+p).hidden = p!==t);
+  ["diary","temp","check","horses","guide","settings"].forEach(p => $("panel-"+p).hidden = p!==t);
   window.scrollTo(0,0);
 }
 function bindUI(){
@@ -136,7 +136,6 @@ function bindUI(){
   $("guideBack").onclick = () => showTab("check");
   document.querySelectorAll("nav.tabs button").forEach(b => b.onclick = () => showTab(b.dataset.tab));
   mountAddForm("add", "addHorseBtn", "addHorseSlot", "horseSel");
-  mountAddForm("hra", "hrAddHorseBtn", "hrAddHorseSlot", "hrHorse");
   mountAddForm("hha", "hAddHorseBtn", "hAddHorseSlot", null);
   mountAddForm("dad", "dAddHorseBtn", "dAddHorseSlot", "dHorse");
   mountAddForm("tad", "tAddHorseBtn", "tAddHorseSlot", "tHorse");
@@ -149,7 +148,6 @@ function bindUI(){
   resetDiaryForm(); setDiaryMode("work");
   $("horseSel").onchange = updateAnalyseBtn;
   $("horseSearch").oninput = renderHorses;
-  $("hrForm").onsubmit = saveHr;
   resetHrWhen();
   $("videoIn").onchange = (e) => { const f = e.target.files[0]; if (f) loadVideo(f); };
   const drop = $("drop");
@@ -216,7 +214,7 @@ function mountAddForm(p, btnId, slotId, selectId){
   };
 }
 function renderHorseSelect(){
-  ["horseSel","hrHorse","tHorse","dHorse"].forEach(id => {
+  ["horseSel","tHorse","dHorse"].forEach(id => {
     const sel = $(id); const cur = sel.value;
     sel.innerHTML = S.horses.length
       ? `<option value="">Choose a horse…</option>` + S.horses.map(h => `<option value="${esc(h.id)}">${esc(hLabel(h))} · ${h.gait==="trotter"?"Trotter":"Pacer"}</option>`).join("")
@@ -229,20 +227,7 @@ function renderHorseSelect(){
 /* ================= heart rate ================= */
 const dayAt = (d) => new Date((d || todayStr()) + "T12:00:00").toISOString();   // date-only readings are stored at midday
 const dayOf = (iso) => { try{ const d = new Date(iso); d.setMinutes(d.getMinutes() - d.getTimezoneOffset()); return d.toISOString().slice(0,10); }catch(_){ return String(iso||"").slice(0,10); } };
-function resetHrWhen(){ $("hrWhen").value = todayStr(); if ($("tWhen")) $("tWhen").value = todayStr(); }
-async function saveHr(e){
-  e.preventDefault();
-  const horse = horseById($("hrHorse").value);
-  if (!horse){ msg("hrMsg","Choose a horse first.", false); return; }
-  const num = (id) => { const v = $(id).value.trim(); return v === "" ? null : Math.round(+v); };
-  const rec = {horseId:horse.id, horseName:horse.name, at:dayAt($("hrWhen").value), work:$("hrWork").value,
-    bpm10:num("hr10"), bpm20:num("hr20"), createdAt:new Date().toISOString()};
-  if (rec.bpm10 === null && rec.bpm20 === null){ msg("hrMsg","Enter the heart rate at 10 or 20 minutes.", false); return; }
-  const id = uid("r");
-  try{ await save("hr", id, rec); }catch(err){ msg("hrMsg", saveErrMsg(err), false); return; }
-  ["hr10","hr20"].forEach(i => $(i).value = "");
-  msg("hrMsg", `Saved for ${hShort(horse)}. ${hrFlag({id, ...rec}).text}`, true);
-}
+function resetHrWhen(){ $("tWhen").value = todayStr(); }
 function hrFlag(r){
   const prior = S.hr.filter(x => x.horseId===r.horseId && x.id!==r.id && x.work===r.work && x.at < r.at);
   const avg = (k) => { const v = prior.map(x=>x[k]).filter(n=>n!==null && n!==undefined); return v.length>=2 ? v.reduce((a,b)=>a+b,0)/v.length : null; };
@@ -266,6 +251,7 @@ function hrRow(r, showHorse, delKey){
 }
 function renderHrRecent(){
   const list = S.hr.filter(hasHr);
+  if (!$("hrRecent")) return;
   $("hrRecent").innerHTML = list.length ? list.slice(0,10).map(r=>hrRow(r,true)).join("")
     : `<p class="muted small" style="margin:0">No readings yet. Saved readings show here and on each horse's page.</p>`;
 }
@@ -1150,7 +1136,6 @@ function renderHorseDetail(){
       <div class="row">
         <button class="btn primary" type="button" id="diaryThis">+ Work</button>
         <button class="btn" type="button" id="startThis">+ Race / trial</button>
-        <button class="btn" type="button" id="hrThis">+ HR</button>
         <button class="btn" type="button" id="tempThis">+ Temp</button>
         <button class="btn" type="button" id="checkThis">Gait check</button>
         <button class="btn" type="button" id="editThis">Edit horse</button>
@@ -1207,7 +1192,6 @@ function renderHorseDetail(){
   $("diaryThis").onclick = $("diaryThis2").onclick = () => openDiaryFor(h, "work");
   $("startThis").onclick = $("startThis2").onclick = () => openDiaryFor(h, "start");
   $("checkThis").onclick = () => { $("horseSel").value = h.id; updateAnalyseBtn(); showTab("check"); };
-  $("hrThis").onclick = () => { $("hrHorse").value = h.id; msg("hrMsg","",true); showTab("hr"); };
   $("tempThis").onclick = () => { $("tHorse").value = h.id; msg("tMsg","",true); showTab("temp"); };
   $("aiBtn").onclick = () => analyseHorse(h);
   $("goSupp").onclick = () => showTab("settings");
