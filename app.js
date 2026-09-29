@@ -70,7 +70,7 @@ function startData(){
   };
   S.unsubs.push(onSnapshot(collection(S.fs,"horses"), snap => {
     S.horses = snap.docs.map(d => ({id:d.id, ...d.data()})).sort((a,b)=>String(hShort(a)).localeCompare(String(hShort(b))));
-    renderHorseSelect(); renderHorses(); renderDiaryRecent(); renderHrRecent(); renderTempRecent();
+    renderHorseSelect(); renderHorses(); renderDiaryRecent(); renderHrRecent(); renderTempRecent(); renderSuppTotals();
   }, denied));
   S.unsubs.push(onSnapshot(query(collection(S.fs,"checks"), orderBy("createdAt","desc"), limit(500)), snap => {
     S.checks = snap.docs.map(d => ({id:d.id, ...d.data()}));
@@ -93,7 +93,7 @@ function startData(){
     renderDiaryRecent(); renderHorses();
   }, denied));
   S.unsubs.push(onSnapshot(doc(S.fs,"settings","supplements"), snap => {
-    S.supps = snap.exists() ? (snap.data().list || []) : [];
+    S.supps = snap.exists() ? (snap.data().list || []) : []; S.suppDetails = snap.exists() ? (snap.data().details || {}) : {};
     renderSuppSettings(); renderHorses();
   }, () => {}));
   S.unsubs.push(onSnapshot(query(collection(S.fs,"diary"), orderBy("date","desc"), limit(3000)), snap => {
@@ -1009,29 +1009,80 @@ function renderCareOverview(){
 }
 
 /* ================= supplements ================= */
+// settings/supplements: { list:[names], details:{ name:{ cost:<$ per unit>, unit:"scoop" } } }
+// horse: supplements:[names ticked], suppQty:{ name: <units per day> }
 function supList(){ return (S.supps || []).slice().sort((a, b) => a.localeCompare(b)); }
+const suppInfo = (n) => ({ unit: "scoop", cost: null, ...((S.suppDetails || {})[n] || {}) });
+const money = (v) => "$" + (Math.round(v * 100) / 100).toFixed(2);
+const plural = (u, q) => q === 1 || !u || /s$|ml$|g$|kg$|l$/i.test(u) ? u : u + "s";
+function horseSuppCost(h){
+  const on = (h.supplements || []).filter(n => (S.supps || []).includes(n));
+  let total = 0, missing = 0;
+  for (const n of on){ const c = suppInfo(n).cost, q = (h.suppQty || {})[n]; if (c != null && q != null) total += c * q; else missing++; }
+  return { on, total, missing };
+}
+async function saveSupps(list, details){ await save("settings", "supplements", { list, details }); }
 function renderSuppSettings(){
   const box = $("suppList"); if (!box) return;
   const list = supList();
-  box.innerHTML = list.length ? list.map(s => `<span class="chip">${esc(s)} <button class="link small" type="button" data-rmsupp="${esc(s)}" aria-label="Remove ${esc(s)}">×</button></span>`).join("")
-    : `<span class="muted small">No supplements yet. Add them above.</span>`;
-  box.querySelectorAll("[data-rmsupp]").forEach(b => b.onclick = async () => {
-    try{ await save("settings", "supplements", { list: (S.supps||[]).filter(x => x !== b.dataset.rmsupp) }); }catch(err){ msg("suppMsg", saveErrMsg(err), false); }
+  box.innerHTML = list.length ? `<div class="supptable">
+      <div class="sh"><span>Supplement</span><span>Cost ($)</span><span>per</span><span></span></div>
+      ${list.map(n => { const d = suppInfo(n); return `<div class="sr">
+        <span class="nm">${esc(n)}</span>
+        <input type="text" inputmode="decimal" autocomplete="off" data-scost="${esc(n)}" value="${d.cost != null ? esc(d.cost) : ""}" placeholder="0.00" aria-label="Cost per ${esc(d.unit)} of ${esc(n)}">
+        <input type="text" autocomplete="off" data-sunit="${esc(n)}" value="${esc(d.unit)}" aria-label="Unit for ${esc(n)}">
+        <button class="link small" type="button" data-rmsupp="${esc(n)}" aria-label="Remove ${esc(n)}">×</button></div>`; }).join("")}
+    </div>` : `<span class="muted small">No supplements yet. Add them above.</span>`;
+  const details = () => ({ ...(S.suppDetails || {}) });
+  box.querySelectorAll("[data-scost]").forEach(inp => inp.onchange = async () => {
+    const n = inp.dataset.scost, v = inp.value.trim().replace("$", "").replace(",", "."), d = details();
+    const cost = v === "" ? null : Math.round(parseFloat(v) * 100) / 100;
+    if (v !== "" && (isNaN(cost) || cost < 0)){ msg("suppMsg", "Enter the cost as a number, e.g. 1.50", false); return; }
+    d[n] = { ...suppInfo(n), cost };
+    try{ await saveSupps(S.supps, d); msg("suppMsg", `Saved ${n}.`, true); }catch(err){ msg("suppMsg", saveErrMsg(err), false); }
   });
+  box.querySelectorAll("[data-sunit]").forEach(inp => inp.onchange = async () => {
+    const n = inp.dataset.sunit, d = details(); d[n] = { ...suppInfo(n), unit: inp.value.trim() || "scoop" };
+    try{ await saveSupps(S.supps, d); msg("suppMsg", `Saved ${n}.`, true); }catch(err){ msg("suppMsg", saveErrMsg(err), false); }
+  });
+  box.querySelectorAll("[data-rmsupp]").forEach(b => b.onclick = async () => {
+    const d = details(); delete d[b.dataset.rmsupp];
+    try{ await saveSupps((S.supps||[]).filter(x => x !== b.dataset.rmsupp), d); }catch(err){ msg("suppMsg", saveErrMsg(err), false); }
+  });
+  renderSuppTotals();
+}
+function renderSuppTotals(){
+  const box = $("suppTotals"); if (!box) return;
+  const rows = S.horses.map(h => ({ h, ...horseSuppCost(h) })).filter(r => r.on.length);
+  if (!rows.length){ box.innerHTML = ""; return; }
+  const all = rows.reduce((a, r) => a + r.total, 0);
+  box.innerHTML = `<h3 style="margin:6px 0 0">Cost per horse</h3>
+    <div class="supptable costs">
+      <div class="sh"><span>Horse</span><span>Per day</span><span>Per week</span><span>Per month</span></div>
+      ${rows.map(r => `<div class="sr"><span class="nm">${esc(hShort(r.h))}${r.missing ? ` <span class="muted small">(${r.missing} not priced)</span>` : ""}</span><span class="mono">${money(r.total)}</span><span class="mono">${money(r.total*7)}</span><span class="mono">${money(r.total*30)}</span></div>`).join("")}
+      <div class="sr tot"><span class="nm">All horses</span><span class="mono">${money(all)}</span><span class="mono">${money(all*7)}</span><span class="mono">${money(all*30)}</span></div>
+    </div>
+    <p class="small muted" style="margin:0">A month is counted as 30 days.</p>`;
 }
 async function addSupp(e){
   e.preventDefault();
   const names = $("suppNew").value.split(",").map(s => s.trim()).filter(Boolean);
   if (!names.length) return;
   const list = [...new Set([...(S.supps||[]), ...names])];
-  try{ await save("settings", "supplements", { list }); $("suppNew").value = ""; msg("suppMsg", `Added ${names.length}.`, true); }catch(err){ msg("suppMsg", saveErrMsg(err), false); }
+  try{ await saveSupps(list, S.suppDetails || {}); $("suppNew").value = ""; msg("suppMsg", `Added ${names.length}. Now enter the cost for each.`, true); }catch(err){ msg("suppMsg", saveErrMsg(err), false); }
 }
 function suppCard(h){
-  const list = supList(), on = new Set(h.supplements || []);
-  return `<div class="card"><div class="topline"><h3>Supplements</h3><button class="link" type="button" id="goSupp">Edit the list</button></div>
-    ${list.length ? `<div class="supps">${list.map((s, i) => `<label class="supp"><input type="checkbox" data-supp="${esc(s)}" ${on.has(s) ? "checked" : ""}> ${esc(s)}</label>`).join("")}</div>
-      <p class="small muted" style="margin:0">${on.size ? `On ${on.size}: ${esc([...on].filter(s => list.includes(s)).join(", "))}` : "Not on any supplements."}</p>`
-      : `<p class="muted small" style="margin:0">Add your supplements in Settings first, then tick the ones ${esc(hShort(h))} is on.</p>`}
+  const list = supList(), on = new Set(h.supplements || []), qty = h.suppQty || {}, cost = horseSuppCost(h);
+  return `<div class="card"><div class="topline"><h3>Supplements</h3><button class="link" type="button" id="goSupp">Edit the list &amp; costs</button></div>
+    ${list.length ? `<div class="supplist">${list.map(n => { const d = suppInfo(n), q = qty[n], has = on.has(n);
+        return `<div class="supprow${has ? " on" : ""}">
+          <label class="supp"><input type="checkbox" data-supp="${esc(n)}" ${has ? "checked" : ""}> ${esc(n)}</label>
+          ${has ? `<span class="qty"><input type="text" inputmode="decimal" autocomplete="off" data-sqty="${esc(n)}" value="${q != null ? esc(q) : ""}" placeholder="0" aria-label="${esc(d.unit)} of ${esc(n)} per day"> <span class="small">${esc(plural(d.unit, q))} a day</span>
+            <b class="mono small">${d.cost != null && q != null ? money(d.cost * q) : d.cost == null ? `<span class="muted">no price</span>` : ""}</b></span>` : ""}
+        </div>`; }).join("")}</div>
+      ${cost.on.length ? `<div class="kv"><dt>Per day</dt><dd class="mono"><b>${money(cost.total)}</b></dd><dt>Per week</dt><dd class="mono">${money(cost.total*7)}</dd><dt>Per month</dt><dd class="mono">${money(cost.total*30)}</dd></div>
+        ${cost.missing ? `<p class="small muted" style="margin:0">${cost.missing} supplement${cost.missing>1?"s":""} still need an amount or a price.</p>` : ""}` : `<p class="small muted" style="margin:0">Not on any supplements.</p>`}`
+      : `<p class="muted small" style="margin:0">Add your supplements and their costs in Settings first, then tick the ones ${esc(hShort(h))} is on.</p>`}
   </div>`;
 }
 
@@ -1048,7 +1099,7 @@ async function analyseHorse(h){
   allTemps().filter(t => t.horseId === h.id && t.at >= since).slice(0, 30).forEach(t => lines.push(`${dayOf(t.at)} TEMPERATURE ${t.temp}°C`));
   S.checks.filter(c => c.horseId === h.id && (c.createdAt||"") >= since).slice(0, 6).forEach(c => lines.push(`${(c.createdAt||"").slice(0,10)} GAIT CHECK (${c.mode === "measure" ? "measured" : "AI opinion"}): ${c.result?.verdict}; ${(c.result?.limbs||[]).filter(l => l.level !== "none").map(l => l.limb + " " + l.level).join(", ") || "no leg flagged"}`));
   for (const kind of ["shoe", "worm"]){ const st = careStatus(h.id, kind); if (st) lines.push(`${CARE[kind].name}: last ${st.last.date}, next due ${st.due}${st.level !== "ok" ? " (" + st.level + ")" : ""}`); }
-  if ((h.supplements||[]).length) lines.push(`Supplements: ${h.supplements.join(", ")}`);
+  if ((h.supplements||[]).length) lines.push(`Supplements: ${h.supplements.map(n => { const q = (h.suppQty||{})[n]; return q != null ? `${n} (${q} ${suppInfo(n).unit}/day)` : n; }).join(", ")}`);
   const prompt = `You are an experienced New Zealand harness racing trainer's assistant. Review this ${h.gait === "trotter" ? "trotter" : "pacer"}'s recent records and write a short, practical training summary for the stable. Today is ${todayStr()}.
 Horse: race name ${h.name}${h.stableName ? ", stable name " + h.stableName : ""}.${h.notes ? " Notes: " + h.notes : ""}
 RECORDS (newest first within each type):
@@ -1195,6 +1246,11 @@ function renderHorseDetail(){
   $("tempThis").onclick = () => { $("tHorse").value = h.id; msg("tMsg","",true); showTab("temp"); };
   $("aiBtn").onclick = () => analyseHorse(h);
   $("goSupp").onclick = () => showTab("settings");
+  d.querySelectorAll("[data-sqty]").forEach(inp => inp.onchange = async () => {
+    const v = inp.value.trim().replace(",", "."), q = v === "" ? null : parseFloat(v);
+    if (v !== "" && (isNaN(q) || q < 0)) return;
+    try{ await patch("horses", h.id, { suppQty: { ...(h.suppQty || {}), [inp.dataset.sqty]: q } }); }catch(err){ alertBox("storeNote", saveErrMsg(err)); }
+  });
   d.querySelectorAll("[data-supp]").forEach(cb => cb.onchange = async () => {
     const set = new Set(h.supplements || []); cb.checked ? set.add(cb.dataset.supp) : set.delete(cb.dataset.supp);
     try{ await patch("horses", h.id, { supplements: [...set] }); }catch(err){ alertBox("storeNote", saveErrMsg(err)); }

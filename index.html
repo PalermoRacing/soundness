@@ -268,13 +268,14 @@
     </form>
     <form class="card" id="suppForm">
       <h2>Supplements</h2>
-      <p class="muted small" style="margin:0">Your full list. Tick which ones each horse is on from the horse's page.</p>
+      <p class="muted small" style="margin:0">Your full list, with the cost per scoop (or ml, gram, etc.). Tick which ones each horse is on, and how much a day, on the horse's page.</p>
       <div class="row">
         <div class="field"><label for="suppNew">Add supplements</label><input id="suppNew" type="text" autocomplete="off" placeholder="One name, or several separated by commas"></div>
         <button class="btn primary" type="submit">Add</button>
       </div>
       <div id="suppList" class="supps"></div>
       <div id="suppMsg" class="small" hidden></div>
+      <div id="suppTotals"></div>
     </form>
     <button class="link" type="button" id="settingsBack">← Back</button>
   </section>
