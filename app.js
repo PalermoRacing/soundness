@@ -824,7 +824,7 @@ function setDiaryMode(m){
   $("dForm").hidden = m !== "work"; $("sForm").hidden = m !== "start"; msg("dMsg","",true);
 }
 function resetDiaryForm(){
-  ["dDistance","dFull","d800","dHr10","dHr20","dNotes"].forEach(i => $(i).value = ""); $("dDate").value = todayStr();
+  ["dDistance","dFull","d800","dNotes"].forEach(i => $(i).value = ""); $("dDate").value = todayStr();
   ["sVenue","sPlace","sTime","sNotes"].forEach(i => $(i).value = ""); $("sDate").value = todayStr();
 }
 async function saveDiary(e){
@@ -835,15 +835,8 @@ async function saveDiary(e){
   const rec = { horseId: horse.id, horseName: horse.name, date: $("dDate").value || todayStr(), type,
     distance: $("dDistance").value.trim(), fullTime: $("dFull").value.trim(), time800: $("d800").value.trim(), notes: $("dNotes").value.trim(),
     createdAt: new Date().toISOString() };
-  const num = (id) => { const v = $(id).value.trim(); return v === "" ? null : Math.round(+v); };
-  const b10 = num("dHr10"), b20 = num("dHr20"), id = uid("d");
-  try{
-    await save("diary", id, rec);
-    if (b10 !== null || b20 !== null)
-      await save("hr", uid("r"), { horseId: horse.id, horseName: horse.name, at: dayAt(rec.date), work: type, bpm10: b10, bpm20: b20, diaryId: id, createdAt: new Date().toISOString() });
-  }catch(err){ msg("dMsg", saveErrMsg(err), false); return; }
-  const hrNote = (b10 !== null || b20 !== null) ? " " + hrFlag({ id: "_new", horseId: horse.id, work: type, at: dayAt(rec.date), bpm10: b10, bpm20: b20 }).text : "";
-  msg("dMsg", `Saved ${DTYPE[type].toLowerCase()} for ${hShort(horse)} on ${fmtDay(rec.date)}.${hrNote}`, true);
+  try{ await save("diary", uid("d"), rec); }catch(err){ msg("dMsg", saveErrMsg(err), false); return; }
+  msg("dMsg", `Saved ${DTYPE[type].toLowerCase()} for ${hShort(horse)} on ${fmtDay(rec.date)}. Add the heart rate on the entry below when you take it.`, true);
   resetDiaryForm();
 }
 async function saveStart(e){
@@ -862,16 +855,44 @@ function diaryDetail(e){
   return [e.distance, e.fullTime ? `full time ${e.fullTime}` : "", e.time800 ? `800 m ${e.time800}` : "", e.times].filter(Boolean).join(" · ");
 }
 function diaryRow(e, showHorse, delKey){
-  const det = diaryDetail(e), hr = S.hr.find(r => r.diaryId === e.id);
-  const hrLine = hr ? `HR ${esc(hr.bpm10 ?? "–")} at 10 min · ${esc(hr.bpm20 ?? "–")} at 20 min${hrFlag(hr).level === "slow" ? ` <span class="pill p-possible">Slow recovery</span>` : ""}` : "";
+  const det = diaryDetail(e), hrBlock = e.type === "farrier" ? "" : diaryHrHTML(e);
   return `<div class="hrrow">
     <div><span class="d mono">${esc(fmtDay(e.date))}</span>${showHorse ? ` · <b>${esc(hName(e.horseId, e.horseName))}</b>` : ""} <span class="pill ${e.type==="heats" ? "p-possible" : e.type==="fast" ? "p-lame" : "p-sound"}">${esc(DTYPE[e.type]||e.type)}</span></div>
     ${det ? `<div class="mono small">${esc(det)}</div>` : ""}
-    ${hrLine ? `<div class="mono small">${hrLine}</div>` : ""}
+    ${hrBlock}
     ${e.notes ? `<div class="small muted">${esc(e.notes)}</div>` : ""}
     ${delKey ? delBtn("diary", e.id, delKey) : ""}
   </div>`;
 }
+/* heart rate on a saved diary entry: enter 10 min, save, come back for 20 min */
+function diaryHrHTML(e){
+  const hr = S.hr.find(r => r.diaryId === e.id), f = hr && hasHr(hr) ? hrFlag(hr) : null;
+  const cell = (m) => {
+    const v = hr ? hr["bpm" + m] : null, key = e.id + "_" + m, editing = S.hrEdit === key;
+    if (v != null && !editing) return `<span class="hrcell"><i>${m} min</i><b class="mono">${esc(v)}</b><button class="link small" type="button" data-hredit="${esc(key)}">Change</button></span>`;
+    return `<span class="hrcell"><i>${m} min</i><input type="number" inputmode="numeric" min="20" max="260" placeholder="bpm" data-hrin="${esc(key)}" value="${v != null ? esc(v) : ""}" aria-label="Heart rate at ${m} minutes"><button class="btn small" type="button" data-hrsave="${esc(key)}">Save</button></span>`;
+  };
+  return `<div class="hrline"><span class="small"><b>HR</b></span>${cell(10)}${cell(20)}${f?.level === "slow" ? `<span class="pill p-possible">Slow recovery</span>` : ""}</div>`;
+}
+function bindDiaryHr(root){
+  root.querySelectorAll("[data-hredit]").forEach(b => b.onclick = () => { S.hrEdit = b.dataset.hredit; rerenderDiaryViews(); const i = document.querySelector(`[data-hrin="${S.hrEdit}"]`); i && i.focus(); });
+  const go = async (key) => {
+    const inp = root.querySelector(`[data-hrin="${key}"]`); if (!inp) return;
+    const [id, m] = key.split("_"), e = S.diary.find(x => x.id === id); if (!e) return;
+    const v = inp.value.trim(), bpm = v === "" ? null : Math.round(+v);
+    if (v !== "" && (isNaN(bpm) || bpm < 20 || bpm > 260)){ inp.setCustomValidity("Enter beats per minute, e.g. 92"); inp.reportValidity(); return; }
+    const hr = S.hr.find(r => r.diaryId === id);
+    if (S.hrEdit === key) S.hrEdit = null;
+    try{
+      if (hr) await patch("hr", hr.id, { ["bpm" + m]: bpm });
+      else if (bpm !== null) await save("hr", uid("r"), { horseId: e.horseId, horseName: e.horseName, at: dayAt(e.date), work: e.type, bpm10: m === "10" ? bpm : null, bpm20: m === "20" ? bpm : null, diaryId: id, createdAt: new Date().toISOString() });
+      rerenderDiaryViews();
+    }catch(err){ alertBox("storeNote", saveErrMsg(err)); }
+  };
+  root.querySelectorAll("[data-hrsave]").forEach(b => b.onclick = () => go(b.dataset.hrsave));
+  root.querySelectorAll("[data-hrin]").forEach(i => i.onkeydown = (ev) => { if (ev.key === "Enter"){ ev.preventDefault(); go(i.dataset.hrin); } });
+}
+function rerenderDiaryViews(){ renderDiaryRecent(); if (S.openHorse && !$("horseDetail").hidden) renderHorseDetail(); }
 function startRow(s, showHorse, delKey){
   const det = [s.placing ? `placed ${s.placing}` : "", s.time ? `time ${s.time}` : ""].filter(Boolean).join(" · ");
   return `<div class="hrrow">
@@ -895,7 +916,7 @@ function renderDiaryRecent(){
       html += it.k === "d" ? diaryRow(it.e, true, "r") : startRow(it.e, true, "r");
     }
     box.innerHTML = html;
-    bindDeletes(box, "r", renderDiaryRecent);
+    bindDeletes(box, "r", renderDiaryRecent); bindDiaryHr(box);
   }
   renderDueBanner();
 }
@@ -1266,7 +1287,7 @@ function renderHorseDetail(){
     catch(err){ msg("eMsg", saveErrMsg(err), false); }
   };
   if ($("diaryMore")) $("diaryMore").onclick = () => { S.showAllDiary = !S.showAllDiary; rerender(); };
-  ["w","s","t","h","cshoe","cworm"].forEach(k => bindDeletes(d, k, rerender));
+  ["w","s","t","h","cshoe","cworm"].forEach(k => bindDeletes(d, k, rerender)); bindDiaryHr(d);
   bindInvoice(d);
   d.querySelectorAll("[data-check]").forEach(b => b.onclick = () => { S.openCheck = b.dataset.check; rerender(); window.scrollTo(0,0); });
   $("delHorse").onclick = () => confirmIn($("delHWrap"), `Delete ${hShort(h)} and all their records? This can't be undone.`, async () => {

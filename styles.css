@@ -171,3 +171,8 @@ ul.plain li{margin:2px 0}
 .supprow{display:flex;flex-wrap:wrap;align-items:center;gap:6px 12px}
 .supprow .qty{display:flex;align-items:center;gap:6px}
 .supprow .qty input{width:64px;padding:6px 8px}
+.hrline{display:flex;flex-wrap:wrap;align-items:center;gap:6px 14px;border-top:1px dashed var(--line);padding-top:8px;margin-top:2px}
+.hrcell{display:inline-flex;align-items:center;gap:6px}
+.hrcell i{font-style:normal;font-size:12px;color:var(--muted)}
+.hrcell input{width:74px;padding:6px 8px}
+.btn.small{padding:6px 12px;min-height:34px;font-size:14px}
