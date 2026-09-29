@@ -17,8 +17,8 @@ const FOOTAGE = { inhand_straight:"In hand, towards/away", inhand_side:"In hand,
 const LIMBS = {LF:"Left fore", RF:"Right fore", LH:"Left hind", RH:"Right hind"};
 const VERDICT = {sound:"Looks sound", possible:"Possible lameness", lame:"Lame", unclear:"Can't tell"};
 const LEVEL = {none:"No sign", watch:"Watch", suspect:"Suspect", likely:"Likely"};
-const WORK = {jog:"Jog", fast:"Fast work", heats:"Heats", trial:"Trial / workout", race:"Race", other:"Other"};
-const DTYPE = {jog:"Jog", fast:"Fast work", heats:"Heats", track:"Trackwork", trial:"Trial", race:"Race", swim:"Swim", walker:"Walker", treadmill:"Treadmill", paddock:"Paddock / turnout", rest:"Rest day", farrier:"Shod / farrier", vet:"Vet / treatment", other:"Other"};
+const WORK = {jog:"Jog", canter:"Canter", fast:"Fast work", heats:"Heats", trial:"Trial / workout", race:"Race", other:"Other"};
+const DTYPE = {jog:"Jog", canter:"Canter", fast:"Fast work", heats:"Heats", track:"Trackwork", trial:"Trial", race:"Race", swim:"Swim", walker:"Walker", treadmill:"Treadmill", paddock:"Paddock / turnout", rest:"Rest day", farrier:"Shod / farrier", vet:"Vet / treatment", other:"Other"};
 const SHOEWORK = {full:"Full set", fronts:"Fronts only", hinds:"Hinds only", reset:"Reset", trim:"Trim only", lost:"Lost shoe replaced"};
 const horseById = (id) => S.horses.find(h => h.id === id);
 const hLabel = (h) => !h ? "" : (h.stableName && h.stableName.trim().toLowerCase() !== String(h.name||"").trim().toLowerCase()) ? `${h.stableName} (${h.name})` : h.name;
@@ -899,7 +899,7 @@ function renderDiaryRecent(){
   }
   renderDueBanner();
 }
-function lastWorked(horseId){ return S.diary.find(e => e.horseId === horseId && ["jog","fast","heats","track"].includes(e.type)); }
+function lastWorked(horseId){ return S.diary.find(e => e.horseId === horseId && ["jog","canter","fast","heats","track"].includes(e.type)); }
 
 /* ================= shoeing + worming (care) ================= */
 const CARE = { shoe: { name: "Shoeing", verb: "shod", weeks: 6 }, worm: { name: "Worming", verb: "wormed", weeks: 12 } };
@@ -1054,7 +1054,7 @@ Horse: race name ${h.name}${h.stableName ? ", stable name " + h.stableName : ""}
 RECORDS (newest first within each type):
 ${lines.join("\n") || "No records yet."}
 
-Look for: workload pattern (how often jogged / fast work / heats, rest gaps), whether full and 800 m times are improving or slowing, heart-rate recovery trends, any raised temperatures, gait check flags, and shoeing/worming due. Only comment on what the data shows; say when there isn't enough data. Plain NZ English, no fluff. Don't diagnose; suggest checking with the vet where appropriate.
+Look for: workload pattern (how often jogged / cantered / fast work / heats, rest gaps), whether full and 800 m times are improving or slowing, heart-rate recovery trends, any raised temperatures, gait check flags, and shoeing/worming due. Only comment on what the data shows; say when there isn't enough data. Plain NZ English, no fluff. Don't diagnose; suggest checking with the vet where appropriate.
 Reply with ONLY JSON: {"headline":"one sentence","points":["3-6 short observations"],"watch":["0-4 things to keep an eye on or do next"]}`;
   try{
     S.ctl = new AbortController();
