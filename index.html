@@ -50,6 +50,7 @@
   </nav>
 
   <div id="storeNote" class="banner" hidden></div>
+  <div id="undoBar" class="undobar" role="status" hidden></div>
 
   <!-- WORK DIARY -->
   <section class="panel" id="panel-diary">
@@ -273,6 +274,11 @@
       <div id="suppMsg" class="small" hidden></div>
       <div id="suppTotals"></div>
     </form>
+    <div class="card" id="trashCard">
+      <h2>Recently deleted</h2>
+      <p class="muted small" style="margin:0">Anything you delete is kept here for 30 days, then removed for good. Tap Restore to put it back.</p>
+      <div id="trashList"></div>
+    </div>
     <button class="link" type="button" id="settingsBack">← Back</button>
   </section>
   </main>

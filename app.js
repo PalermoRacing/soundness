@@ -29,7 +29,7 @@ const addDays = (str, n) => { const d = new Date(str + "T12:00:00"); d.setDate(d
 const fmtDay = (str) => { try { return new Date(str + "T12:00:00").toLocaleDateString("en-NZ", {weekday:"short", day:"numeric", month:"short", year:"numeric"}); } catch(_){ return str; } };
 
 const S = { fs:null, auth:null, me:null, horses:[], checks:[], hr:[], settings:{}, unsubs:[],
-  diary:[], temps:[], starts:[], care:[], supps:[], diaryMode:"work", invMonth:null, showAllDiary:false, editHorse:false,
+  diary:[], trash:[], temps:[], starts:[], care:[], supps:[], diaryMode:"work", invMonth:null, showAllDiary:false, editHorse:false,
   file:null, segStart:0, ctl:null, openHorse:null, openCheck:null, prevTab:"diary" };
 
 /* ================= boot & auth ================= */
@@ -92,6 +92,10 @@ function startData(){
     S.care = snap.docs.map(d => ({id:d.id, ...d.data()}));
     renderDiaryRecent(); renderHorses();
   }, denied));
+  S.unsubs.push(onSnapshot(query(collection(S.fs,"trash"), orderBy("deletedAt","desc"), limit(500)), snap => {
+    S.trash = snap.docs.map(d => ({id:d.id, ...d.data()}));
+    purgeOldTrash(); renderTrash();
+  }, () => {}));
   S.unsubs.push(onSnapshot(doc(S.fs,"settings","supplements"), snap => {
     S.supps = snap.exists() ? (snap.data().list || []) : []; S.suppDetails = snap.exists() ? (snap.data().details || {}) : {};
     renderSuppSettings(); renderHorses();
@@ -105,7 +109,7 @@ function startData(){
     $("setKey").value = S.settings.geminiKey || ""; $("setModel").value = S.settings.model || "";
     keyNote(); updateAnalyseBtn();
   }, () => {}));
-  renderHorseSelect(); renderHorses(); renderLatestOrExample(); renderHrRecent(); renderTempRecent(); renderDiaryRecent(); renderSuppSettings();
+  renderHorseSelect(); renderHorses(); renderLatestOrExample(); renderHrRecent(); renderTempRecent(); renderDiaryRecent(); renderSuppSettings(); renderTrash();
 }
 function keyNote(){
   const n = $("storeNote");
@@ -321,11 +325,83 @@ function bindDeletes(root, key, after){
   root.querySelectorAll(`[data-delkey="${key}"]`).forEach(b => b.onclick = () => {
     const col = b.dataset.delcol, id = b.dataset.delid;
     confirmIn(root.querySelector(`[data-delwrap="${key}_${col}_${id}"]`), "Delete this entry?", async () => {
-      try{
-        await remove(col, id);
-        if (col === "diary") for (const r of S.hr.filter(r => r.diaryId === id)) await remove("hr", r.id);   // heart rate saved with that diary entry
-      }catch(err){ alertBox("storeNote", saveErrMsg(err)); }
+      const items = [[col, id], ...(col === "diary" ? S.hr.filter(r => r.diaryId === id).map(r => ["hr", r.id]) : [])];   // heart rate saved with that diary entry goes too
+      try{ await trashAndRemove(items, describeRec(col, findRec(col, id))); }
+      catch(err){ alertBox("storeNote", saveErrMsg(err)); }
     }, after);
+  });
+}
+
+/* ================= recently deleted (30-day bin) ================= */
+const TRASH_DAYS = 30;
+const COLS = { diary: () => S.diary, hr: () => S.hr, temps: () => S.temps, starts: () => S.starts, care: () => S.care, checks: () => S.checks, horses: () => S.horses };
+function findRec(col, id){ return (COLS[col]?.() || []).find(r => r.id === id); }
+function describeRec(col, r){
+  if (!r) return "Entry";
+  const nm = hShort(horseById(r.horseId)) || r.horseName || "";
+  const bits = {
+    diary: () => [DTYPE[r.type] || r.type, nm, fmtDay(r.date)],
+    hr: () => ["Heart rate", nm, fmtDay(dayOf(r.at))],
+    temps: () => [`Temperature ${r.temp}°C`, nm, fmtDay(dayOf(r.at))],
+    starts: () => [`${r.kind === "race" ? "Race" : "Trial"} at ${r.venue}`, nm, fmtDay(r.date)],
+    care: () => [r.kind === "worm" ? "Worming" : "Shoeing", nm, fmtDay(r.date)],
+    checks: () => ["Gait check", nm, fmtDate(r.createdAt)],
+    horses: () => [hShort(r)],
+  }[col];
+  return bits ? bits().filter(Boolean).join(" · ") : "Entry";
+}
+/* copy each record into the bin (as one group), then delete the originals */
+async function trashAndRemove(items, label){
+  const group = uid("g"), deletedAt = new Date().toISOString();
+  const recs = items.map(([col, id]) => ({ col, id, rec: findRec(col, id) })).filter(x => x.rec);
+  for (const { col, id, rec } of recs){
+    const { id: _drop, ...data } = rec;
+    await save("trash", uid("x"), { group, label, col, docId: id, data, deletedAt, main: col === items[0][0] && id === items[0][1] });
+  }
+  for (const [col, id] of items) await remove(col, id);
+  showUndo(label, group);
+}
+function trashGroups(){
+  const g = new Map();
+  for (const t of S.trash){ if (!g.has(t.group)) g.set(t.group, { group: t.group, label: t.label, deletedAt: t.deletedAt, items: [] }); g.get(t.group).items.push(t); }
+  return [...g.values()].sort((a, b) => (b.deletedAt||"").localeCompare(a.deletedAt||""));
+}
+async function restoreGroup(group){
+  const items = S.trash.filter(t => t.group === group);
+  for (const t of items) await save(t.col, t.docId, t.data);
+  for (const t of items) await remove("trash", t.id);
+}
+let purging = false;
+async function purgeOldTrash(){
+  if (purging) return; purging = true;
+  const cutoff = new Date(Date.now() - TRASH_DAYS * 864e5).toISOString();
+  try{ for (const t of S.trash.filter(t => (t.deletedAt||"") < cutoff)) await remove("trash", t.id); }catch(_){}
+  purging = false;
+}
+function showUndo(label, group){
+  const box = $("undoBar"); if (!box) return;
+  clearTimeout(S.undoTimer);
+  box.innerHTML = `<span>Deleted ${esc(label)}.</span><button class="link" type="button" id="undoBtn">Undo</button>`;
+  box.hidden = false;
+  $("undoBtn").onclick = async () => {
+    box.innerHTML = `<span>Restoring…</span>`;
+    try{ await restoreGroup(group); box.innerHTML = `<span>Restored.</span>`; }catch(err){ box.innerHTML = `<span>${esc(saveErrMsg(err))}</span>`; }
+    S.undoTimer = setTimeout(() => { box.hidden = true; }, 2500);
+  };
+  S.undoTimer = setTimeout(() => { box.hidden = true; }, 10000);
+}
+function renderTrash(){
+  const box = $("trashList"); if (!box) return;
+  const groups = trashGroups();
+  box.innerHTML = groups.length ? `<div class="history">${groups.map(g => {
+      const days = Math.max(0, TRASH_DAYS - Math.floor((Date.now() - new Date(g.deletedAt)) / 864e5));
+      return `<div class="hrrow"><div><b>${esc(g.label)}</b></div>
+        <div class="small muted">Deleted ${esc(fmtDate(g.deletedAt))} · ${days === 0 ? "removed for good today" : `kept ${days} more day${days === 1 ? "" : "s"}`}${g.items.length > 1 ? ` · ${g.items.length} records` : ""}</div>
+        <div><button class="btn small" type="button" data-restore="${esc(g.group)}">Restore</button></div></div>`; }).join("")}</div>`
+    : `<p class="muted small" style="margin:0">Nothing deleted in the last ${TRASH_DAYS} days.</p>`;
+  box.querySelectorAll("[data-restore]").forEach(b => b.onclick = async () => {
+    b.disabled = true; b.textContent = "Restoring…";
+    try{ await restoreGroup(b.dataset.restore); }catch(err){ b.disabled = false; b.textContent = "Restore"; alertBox("storeNote", saveErrMsg(err)); }
   });
 }
 
@@ -1190,7 +1266,7 @@ function renderHorseDetail(){
       d.innerHTML = `<button class="link" type="button" id="backH">← ${esc(hShort(h))}</button>` + reportHTML(c,{deletable:true});
       $("backH").onclick = () => { S.openCheck = null; renderHorseDetail(); };
       d.querySelector("[data-del]").onclick = () => confirmIn($("delWrap"), "Delete this check for good?", async () => {
-        try{ await remove("checks", c.id); S.openCheck = null; renderHorseDetail(); }catch(err){ alertBox("storeNote", saveErrMsg(err)); }
+        try{ await trashAndRemove([["checks", c.id]], describeRec("checks", c)); S.openCheck = null; renderHorseDetail(); }catch(err){ alertBox("storeNote", saveErrMsg(err)); }
       });
       return;
     }
@@ -1290,12 +1366,11 @@ function renderHorseDetail(){
   ["w","s","t","h","cshoe","cworm"].forEach(k => bindDeletes(d, k, rerender)); bindDiaryHr(d);
   bindInvoice(d);
   d.querySelectorAll("[data-check]").forEach(b => b.onclick = () => { S.openCheck = b.dataset.check; rerender(); window.scrollTo(0,0); });
-  $("delHorse").onclick = () => confirmIn($("delHWrap"), `Delete ${hShort(h)} and all their records? This can't be undone.`, async () => {
+  $("delHorse").onclick = () => confirmIn($("delHWrap"), `Delete ${hShort(h)} and all their records? You can restore them from Recently deleted in Settings for 30 days.`, async () => {
     try{
       const jobs = [...hc.map(c => ["checks", c.id]), ...S.hr.filter(r => r.horseId===h.id).map(r => ["hr", r.id]), ...S.temps.filter(t => t.horseId===h.id).map(t => ["temps", t.id]),
         ...S.diary.filter(e => e.horseId===h.id).map(e => ["diary", e.id]), ...hs.map(s => ["starts", s.id]), ...S.care.filter(c => c.horseId===h.id).map(c => ["care", c.id])];
-      for (const [c, id] of jobs) await remove(c, id);
-      await remove("horses", h.id);
+      await trashAndRemove([["horses", h.id], ...jobs], `${hShort(h)} and all their records (${jobs.length})`);
       S.openHorse = null; S.editHorse = false; renderHorses();
     }catch(err){ alertBox("storeNote", saveErrMsg(err)); }
   });
