@@ -109,7 +109,9 @@ ul.plain{margin:0;padding-left:18px;display:flex;flex-direction:column;gap:4px;f
 .horse-list{display:flex;flex-direction:column;gap:8px}
 .horse{display:grid;grid-template-columns:1fr auto;gap:4px 10px;align-items:center;background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:12px 14px;cursor:pointer;text-align:left;font:inherit;color:inherit;width:100%}
 .horse .nm{font:600 21px/1.1 var(--display)}
-.horse .sm{font-size:13px;color:var(--muted);grid-column:1}
+.horse .sm{font-size:13px;color:var(--muted);grid-column:1 / -1}
+.horse .sm + span{grid-column:1 / -1;display:flex;flex-wrap:wrap;gap:4px}
+.horse .sm + span:empty{display:none}
 .history{display:flex;flex-direction:column;gap:8px}
 .hist{display:grid;grid-template-columns:64px 1fr auto;gap:10px;align-items:center;background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:8px;cursor:pointer;text-align:left;font:inherit;color:inherit;width:100%}
 .hist img{width:64px;height:44px;object-fit:cover;border-radius:5px;background:var(--surface-2)}
@@ -146,3 +148,14 @@ nav.tabs button{font-size:14px;letter-spacing:.03em;white-space:nowrap;padding-i
 .mtable{border-collapse:collapse;width:100%;font-size:13px}
 .mtable th,.mtable td{border-bottom:1px solid var(--line);padding:6px 8px;text-align:left;white-space:nowrap}
 .mtable th{font-weight:600;color:var(--muted)}
+.toggle{display:flex;border:1px solid var(--line);border-radius:10px;overflow:hidden;align-self:flex-start}
+.toggle button{border:0;background:transparent;padding:9px 16px;font:inherit;font-weight:600;color:var(--muted);cursor:pointer;min-height:40px}
+.toggle button[aria-pressed="true"]{background:var(--accent);color:var(--accent-ink)}
+.supps{display:flex;flex-wrap:wrap;gap:8px}
+.supp{display:flex;align-items:center;gap:8px;border:1px solid var(--line);border-radius:999px;padding:6px 12px;font-weight:400;font-size:15px;cursor:pointer}
+.supp input{width:18px;height:18px;margin:0}
+.supp:has(input:checked){background:var(--ok-bg);border-color:transparent}
+.chip{display:inline-flex;align-items:center;gap:6px;background:var(--ok-bg);border-radius:999px;padding:4px 6px 4px 12px;font-size:14px}
+.chip .link{font-size:18px;line-height:1;padding:0 4px}
+ul.plain{margin:6px 0;padding-left:20px}
+ul.plain li{margin:2px 0}
