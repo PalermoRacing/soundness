@@ -77,6 +77,10 @@
           <div class="field"><label for="dFull">Full time</label><input id="dFull" type="text" inputmode="decimal" autocomplete="off" placeholder="e.g. 2:02.4"></div>
           <div class="field"><label for="d800">800 m</label><input id="d800" type="text" inputmode="decimal" autocomplete="off" placeholder="e.g. 58.2"></div>
         </div>
+        <div class="row">
+          <div class="field"><label for="dHr10">Heart rate at 10 min (optional)</label><input id="dHr10" type="number" inputmode="numeric" min="20" max="260" placeholder="bpm, e.g. 92"></div>
+          <div class="field"><label for="dHr20">Heart rate at 20 min (optional)</label><input id="dHr20" type="number" inputmode="numeric" min="20" max="260" placeholder="bpm, e.g. 60"></div>
+        </div>
         <div class="field"><label for="dNotes">Notes (optional)</label><textarea id="dNotes" placeholder="How the horse went, gear, anything to remember"></textarea></div>
         <button class="btn primary big" type="submit">Save to diary</button>
       </form>
@@ -192,7 +196,7 @@
   <!-- HEART RATE -->
   <section class="panel" id="panel-hr" hidden>
     <div class="card">
-      <div><h2>Heart rate</h2><p class="muted small" style="margin:4px 0 0">Take the heart rate 10 and 20 minutes after work. A horse recovering slower than its usual can be an early sign of soreness, illness or fatigue.</p></div>
+      <div><h2>Heart rate</h2><p class="muted small" style="margin:4px 0 0">Take the heart rate 10 and 20 minutes after work. You can also enter it with the work in the Diary. A horse recovering slower than its usual can be an early sign of soreness, illness or fatigue.</p></div>
       <div class="row">
         <div class="field"><label for="hrHorse">Horse</label><select id="hrHorse"></select></div>
         <button class="btn" id="hrAddHorseBtn" type="button">+ Add horse</button>
@@ -200,7 +204,7 @@
       <div id="hrAddHorseSlot"></div>
       <form id="hrForm" style="display:flex;flex-direction:column;gap:12px">
       <div class="row">
-        <div class="field"><label for="hrWhen">Date and time of work</label><input id="hrWhen" type="datetime-local" required></div>
+        <div class="field"><label for="hrWhen">Date of work</label><input id="hrWhen" type="date" required></div>
         <div class="field"><label for="hrWork">Work</label>
           <select id="hrWork"><option value="jog">Jog</option><option value="fast">Fast work</option><option value="heats">Heats</option><option value="trial">Trial</option><option value="race">Race</option></select></div>
       </div>
@@ -229,7 +233,7 @@
       <div id="tAddHorseSlot"></div>
       <form id="tForm" style="display:flex;flex-direction:column;gap:12px">
       <div class="row">
-        <div class="field"><label for="tWhen">Date and time</label><input id="tWhen" type="datetime-local" required></div>
+        <div class="field"><label for="tWhen">Date</label><input id="tWhen" type="date" required></div>
         <div class="field"><label for="tTemp">Temperature (°C)</label><input id="tTemp" type="text" inputmode="decimal" autocomplete="off" placeholder="e.g. 37.8"></div>
       </div>
       <button class="btn primary big" type="submit">Save temperature</button>

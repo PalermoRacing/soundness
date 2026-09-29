@@ -78,7 +78,7 @@ function startData(){
   }, denied));
   S.unsubs.push(onSnapshot(query(collection(S.fs,"hr"), orderBy("at","desc"), limit(1000)), snap => {
     S.hr = snap.docs.map(d => ({id:d.id, ...d.data()}));
-    renderHrRecent(); renderTempRecent(); renderHorses();
+    renderHrRecent(); renderTempRecent(); renderDiaryRecent(); renderHorses();
   }, denied));
   S.unsubs.push(onSnapshot(query(collection(S.fs,"temps"), orderBy("at","desc"), limit(2000)), snap => {
     S.temps = snap.docs.map(d => ({id:d.id, ...d.data()}));
@@ -227,19 +227,20 @@ function renderHorseSelect(){
 }
 
 /* ================= heart rate ================= */
-const nowLocal = () => { const d = new Date(); d.setMinutes(d.getMinutes() - d.getTimezoneOffset()); return d.toISOString().slice(0,16); };
-function resetHrWhen(){ $("hrWhen").value = nowLocal(); if ($("tWhen")) $("tWhen").value = nowLocal(); }
+const dayAt = (d) => new Date((d || todayStr()) + "T12:00:00").toISOString();   // date-only readings are stored at midday
+const dayOf = (iso) => { try{ const d = new Date(iso); d.setMinutes(d.getMinutes() - d.getTimezoneOffset()); return d.toISOString().slice(0,10); }catch(_){ return String(iso||"").slice(0,10); } };
+function resetHrWhen(){ $("hrWhen").value = todayStr(); if ($("tWhen")) $("tWhen").value = todayStr(); }
 async function saveHr(e){
   e.preventDefault();
   const horse = horseById($("hrHorse").value);
   if (!horse){ msg("hrMsg","Choose a horse first.", false); return; }
   const num = (id) => { const v = $(id).value.trim(); return v === "" ? null : Math.round(+v); };
-  const rec = {horseId:horse.id, horseName:horse.name, at:new Date($("hrWhen").value).toISOString(), work:$("hrWork").value,
+  const rec = {horseId:horse.id, horseName:horse.name, at:dayAt($("hrWhen").value), work:$("hrWork").value,
     bpm10:num("hr10"), bpm20:num("hr20"), createdAt:new Date().toISOString()};
   if (rec.bpm10 === null && rec.bpm20 === null){ msg("hrMsg","Enter the heart rate at 10 or 20 minutes.", false); return; }
   const id = uid("r");
   try{ await save("hr", id, rec); }catch(err){ msg("hrMsg", saveErrMsg(err), false); return; }
-  ["hr10","hr20"].forEach(i => $(i).value = ""); $("hrWhen").value = nowLocal();
+  ["hr10","hr20"].forEach(i => $(i).value = "");
   msg("hrMsg", `Saved for ${hShort(horse)}. ${hrFlag({id, ...rec}).text}`, true);
 }
 function hrFlag(r){
@@ -258,7 +259,7 @@ function hrRow(r, showHorse, delKey){
   const f = hrFlag(r);
   const pill = f.level==="slow" ? `<span class="pill p-possible">Slow recovery</span>` : f.level==="ok" ? `<span class="pill p-sound">Normal</span>` : "";
   return `<div class="hrrow">
-    <div><span class="d mono">${esc(fmtDate(r.at))}</span>${showHorse?` · <b>${esc(hName(r.horseId, r.horseName))}</b>`:""} · ${esc(WORK[r.work]||r.work||"")} ${pill}</div>
+    <div><span class="d mono">${esc(fmtDay(dayOf(r.at)))}</span>${showHorse?` · <b>${esc(hName(r.horseId, r.horseName))}</b>`:""} · ${esc(WORK[r.work]||r.work||"")} ${pill}</div>
     <div class="bpm mono" style="grid-template-columns:repeat(2,1fr)"><span><b>${r.bpm10 ?? "–"}</b><i>10 min</i></span><span><b>${r.bpm20 ?? "–"}</b><i>20 min</i></span></div>
     ${delKey?delBtn("hr", r.id, delKey):""}
   </div>`;
@@ -282,7 +283,7 @@ function timeChart(series, { band, unit, colors = ["var(--accent)", "var(--ink)"
   const lines = series.map((pts, si) => {
     const s = pts.slice().sort((a, b) => new Date(a.d) - new Date(b.d));
     return `<polyline fill="none" stroke="${colors[si]}" stroke-width="2.2" points="${s.map(p => `${x(+new Date(p.d)).toFixed(1)},${y(p.v).toFixed(1)}`).join(" ")}"/>` +
-      s.map((p, i) => `<circle cx="${x(+new Date(p.d)).toFixed(1)}" cy="${y(p.v).toFixed(1)}" r="${i === s.length-1 ? 4.5 : 3}" fill="${colors[si]}"><title>${esc(fmtDate(p.d))}: ${p.v}${unit||""}</title></circle>`).join("");
+      s.map((p, i) => `<circle cx="${x(+new Date(p.d)).toFixed(1)}" cy="${y(p.v).toFixed(1)}" r="${i === s.length-1 ? 4.5 : 3}" fill="${colors[si]}"><title>${esc(fmtDay(dayOf(p.d)))}: ${p.v}${unit||""}</title></circle>`).join("");
   }).join("");
   const legend = names.length ? `<p class="small muted" style="margin:0">${names.map((n, i) => `<span style="color:${colors[i]};font-weight:600">●</span> ${esc(n)}`).join("&nbsp;&nbsp;")}</p>` : "";
   return `<div style="overflow-x:auto"><svg viewBox="0 0 ${W} ${H}" width="100%" role="img" aria-label="Chart over time">
@@ -299,9 +300,9 @@ async function saveTemp(e){
   if (!horse){ msg("tMsg","Choose a horse first.", false); return; }
   const tv = $("tTemp").value.trim().replace(",", "."), temp = Math.round(parseFloat(tv)*10)/10;
   if (!tv || isNaN(temp) || temp < 30 || temp > 45){ msg("tMsg","Enter the temperature in °C, e.g. 37.8.", false); return; }
-  const rec = {horseId:horse.id, horseName:horse.name, at:new Date($("tWhen").value).toISOString(), temp, createdAt:new Date().toISOString()};
+  const rec = {horseId:horse.id, horseName:horse.name, at:dayAt($("tWhen").value), temp, createdAt:new Date().toISOString()};
   try{ await save("temps", uid("t"), rec); }catch(err){ msg("tMsg", saveErrMsg(err), false); return; }
-  $("tTemp").value = ""; $("tWhen").value = nowLocal();
+  $("tTemp").value = "";
   msg("tMsg", `Saved for ${hShort(horse)}. ${tempFlag(temp).text}`, true);
 }
 /* Normal adult horse temperature is roughly 37.5–38.5 °C. */
@@ -318,7 +319,7 @@ function allTemps(){ // new temps collection plus any temperatures saved with ol
 function tempRow(t, showHorse, delKey){
   const f = tempFlag(t.temp);
   const pill = f.level === "high" ? `<span class="pill p-lame">High</span>` : f.level === "low" ? `<span class="pill p-possible">Low</span>` : `<span class="pill p-sound">Normal</span>`;
-  return `<div class="hrrow"><div><span class="d mono">${esc(fmtDate(t.at))}</span>${showHorse?` · <b>${esc(hName(t.horseId, t.horseName))}</b>`:""} ${pill}</div>
+  return `<div class="hrrow"><div><span class="d mono">${esc(fmtDay(dayOf(t.at)))}</span>${showHorse?` · <b>${esc(hName(t.horseId, t.horseName))}</b>`:""} ${pill}</div>
     <div class="bpm mono" style="grid-template-columns:1fr"><span><b>${t.temp}</b><i>°C</i></span></div>
     ${delKey && t._col === "temps" ? delBtn("temps", t.id, delKey) : ""}</div>`;
 }
@@ -334,7 +335,10 @@ function bindDeletes(root, key, after){
   root.querySelectorAll(`[data-delkey="${key}"]`).forEach(b => b.onclick = () => {
     const col = b.dataset.delcol, id = b.dataset.delid;
     confirmIn(root.querySelector(`[data-delwrap="${key}_${col}_${id}"]`), "Delete this entry?", async () => {
-      try{ await remove(col, id); }catch(err){ alertBox("storeNote", saveErrMsg(err)); }
+      try{
+        await remove(col, id);
+        if (col === "diary") for (const r of S.hr.filter(r => r.diaryId === id)) await remove("hr", r.id);   // heart rate saved with that diary entry
+      }catch(err){ alertBox("storeNote", saveErrMsg(err)); }
     }, after);
   });
 }
@@ -654,7 +658,7 @@ function buildPrompt(horse, mode, win, nFrames){
     (c.result?.limbs||[]).filter(l=>l.level!=="none").map(l=>`${l.limb} ${l.level}`).join(", ") + `. ${c.result?.summary||""}`).join("\n");
   const since = new Date(Date.now() - 3*864e5).toISOString();
   const hrs = S.hr.filter(r => r.horseId===horse.id && r.at >= since).slice(0,3).map(r =>
-    `- ${r.at.slice(0,16).replace("T"," ")} ${WORK[r.work]||r.work}: ${r.bpm10 ?? "?"} bpm at 10 min, ${r.bpm20 ?? "?"} at 20 min. ${hasHr(r) ? hrFlag(r).text : ""}`).join("\n");
+    `- ${dayOf(r.at)} ${WORK[r.work]||r.work}: ${r.bpm10 ?? "?"} bpm at 10 min, ${r.bpm20 ?? "?"} at 20 min. ${hasHr(r) ? hrFlag(r).text : ""}`).join("\n");
   const wk7 = addDays(todayStr(), -7);
   const work = S.diary.filter(e => e.horseId===horse.id && e.date >= wk7).slice(0,10).map(e =>
     `- ${e.date} ${DTYPE[e.type]||e.type}${e.distance ? ": " + e.distance : ""}${e.fullTime ? "; full time " + e.fullTime : ""}${e.time800 ? "; 800 m " + e.time800 : ""}${e.times ? "; " + e.times : ""}${e.type==="farrier" ? `; ${SHOEWORK[e.shoeWork]||""} ${e.shoeType||""}` : ""}${e.notes ? "; " + e.notes : ""}`).join("\n");
@@ -834,7 +838,7 @@ function setDiaryMode(m){
   $("dForm").hidden = m !== "work"; $("sForm").hidden = m !== "start"; msg("dMsg","",true);
 }
 function resetDiaryForm(){
-  ["dDistance","dFull","d800","dNotes"].forEach(i => $(i).value = ""); $("dDate").value = todayStr();
+  ["dDistance","dFull","d800","dHr10","dHr20","dNotes"].forEach(i => $(i).value = ""); $("dDate").value = todayStr();
   ["sVenue","sPlace","sTime","sNotes"].forEach(i => $(i).value = ""); $("sDate").value = todayStr();
 }
 async function saveDiary(e){
@@ -845,8 +849,15 @@ async function saveDiary(e){
   const rec = { horseId: horse.id, horseName: horse.name, date: $("dDate").value || todayStr(), type,
     distance: $("dDistance").value.trim(), fullTime: $("dFull").value.trim(), time800: $("d800").value.trim(), notes: $("dNotes").value.trim(),
     createdAt: new Date().toISOString() };
-  try{ await save("diary", uid("d"), rec); }catch(err){ msg("dMsg", saveErrMsg(err), false); return; }
-  msg("dMsg", `Saved ${DTYPE[type].toLowerCase()} for ${hShort(horse)} on ${fmtDay(rec.date)}.`, true);
+  const num = (id) => { const v = $(id).value.trim(); return v === "" ? null : Math.round(+v); };
+  const b10 = num("dHr10"), b20 = num("dHr20"), id = uid("d");
+  try{
+    await save("diary", id, rec);
+    if (b10 !== null || b20 !== null)
+      await save("hr", uid("r"), { horseId: horse.id, horseName: horse.name, at: dayAt(rec.date), work: type, bpm10: b10, bpm20: b20, diaryId: id, createdAt: new Date().toISOString() });
+  }catch(err){ msg("dMsg", saveErrMsg(err), false); return; }
+  const hrNote = (b10 !== null || b20 !== null) ? " " + hrFlag({ id: "_new", horseId: horse.id, work: type, at: dayAt(rec.date), bpm10: b10, bpm20: b20 }).text : "";
+  msg("dMsg", `Saved ${DTYPE[type].toLowerCase()} for ${hShort(horse)} on ${fmtDay(rec.date)}.${hrNote}`, true);
   resetDiaryForm();
 }
 async function saveStart(e){
@@ -865,10 +876,12 @@ function diaryDetail(e){
   return [e.distance, e.fullTime ? `full time ${e.fullTime}` : "", e.time800 ? `800 m ${e.time800}` : "", e.times].filter(Boolean).join(" · ");
 }
 function diaryRow(e, showHorse, delKey){
-  const det = diaryDetail(e);
+  const det = diaryDetail(e), hr = S.hr.find(r => r.diaryId === e.id);
+  const hrLine = hr ? `HR ${esc(hr.bpm10 ?? "–")} at 10 min · ${esc(hr.bpm20 ?? "–")} at 20 min${hrFlag(hr).level === "slow" ? ` <span class="pill p-possible">Slow recovery</span>` : ""}` : "";
   return `<div class="hrrow">
     <div><span class="d mono">${esc(fmtDay(e.date))}</span>${showHorse ? ` · <b>${esc(hName(e.horseId, e.horseName))}</b>` : ""} <span class="pill ${e.type==="heats" ? "p-possible" : e.type==="fast" ? "p-lame" : "p-sound"}">${esc(DTYPE[e.type]||e.type)}</span></div>
     ${det ? `<div class="mono small">${esc(det)}</div>` : ""}
+    ${hrLine ? `<div class="mono small">${hrLine}</div>` : ""}
     ${e.notes ? `<div class="small muted">${esc(e.notes)}</div>` : ""}
     ${delKey ? delBtn("diary", e.id, delKey) : ""}
   </div>`;
@@ -1045,8 +1058,8 @@ async function analyseHorse(h){
   const lines = [];
   S.diary.filter(e => e.horseId === h.id && e.date >= since && e.type !== "farrier").slice(0, 60).forEach(e => lines.push(`${e.date} WORK ${DTYPE[e.type]||e.type}: ${[e.distance, e.fullTime && "full time " + e.fullTime, e.time800 && "800m " + e.time800, e.times, e.notes].filter(Boolean).join("; ")}`));
   S.starts.filter(s => s.horseId === h.id && s.date >= addDays(todayStr(), -180)).forEach(s => lines.push(`${s.date} ${s.kind.toUpperCase()} at ${s.venue}${s.placing ? ", placed " + s.placing : ""}${s.time ? ", time " + s.time : ""}${s.notes ? "; " + s.notes : ""}`));
-  S.hr.filter(r => r.horseId === h.id && r.at >= since && hasHr(r)).slice(0, 30).forEach(r => lines.push(`${r.at.slice(0,10)} HEART RATE after ${WORK[r.work]||r.work}: ${r.bpm10 ?? "?"} bpm at 10 min, ${r.bpm20 ?? "?"} at 20 min`));
-  allTemps().filter(t => t.horseId === h.id && t.at >= since).slice(0, 30).forEach(t => lines.push(`${t.at.slice(0,10)} TEMPERATURE ${t.temp}°C`));
+  S.hr.filter(r => r.horseId === h.id && r.at >= since && hasHr(r)).slice(0, 30).forEach(r => lines.push(`${dayOf(r.at)} HEART RATE after ${WORK[r.work]||r.work}: ${r.bpm10 ?? "?"} bpm at 10 min, ${r.bpm20 ?? "?"} at 20 min`));
+  allTemps().filter(t => t.horseId === h.id && t.at >= since).slice(0, 30).forEach(t => lines.push(`${dayOf(t.at)} TEMPERATURE ${t.temp}°C`));
   S.checks.filter(c => c.horseId === h.id && (c.createdAt||"") >= since).slice(0, 6).forEach(c => lines.push(`${(c.createdAt||"").slice(0,10)} GAIT CHECK (${c.mode === "measure" ? "measured" : "AI opinion"}): ${c.result?.verdict}; ${(c.result?.limbs||[]).filter(l => l.level !== "none").map(l => l.limb + " " + l.level).join(", ") || "no leg flagged"}`));
   for (const kind of ["shoe", "worm"]){ const st = careStatus(h.id, kind); if (st) lines.push(`${CARE[kind].name}: last ${st.last.date}, next due ${st.due}${st.level !== "ok" ? " (" + st.level + ")" : ""}`); }
   if ((h.supplements||[]).length) lines.push(`Supplements: ${h.supplements.join(", ")}`);
