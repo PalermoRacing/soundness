@@ -70,13 +70,26 @@
         <div class="row">
           <div class="field"><label for="dDate">Date</label><input id="dDate" type="date" required></div>
           <div class="field"><label for="dType">What was done</label>
-            <select id="dType"><option value="jog">Jog</option><option value="canter">Canter</option><option value="fast">Fast work</option><option value="heat1">Heat (1)</option><option value="heat2">Heat (2)</option></select></div>
+            <select id="dType"><option value="jog">Jog</option><option value="canter">Canter</option><option value="fast">Fast work</option><option value="heats">Heats</option></select></div>
         </div>
-        <div class="field"><label for="dDistance">Distance / sets</label><input id="dDistance" type="text" placeholder="e.g. 8 km jog, or 3 × 1600 m"></div>
-        <div class="row">
-          <div class="field"><label for="dFull">Full time</label><input id="dFull" type="text" inputmode="decimal" autocomplete="off" placeholder="e.g. 2:02.4"></div>
-          <div class="field"><label for="d800">800 m</label><input id="d800" type="text" inputmode="decimal" autocomplete="off" placeholder="e.g. 58.2"></div>
-        </div>
+        <fieldset class="workset" id="dSet1">
+          <legend class="heatlbl">Heat 1</legend>
+          <div class="field"><label for="dDistance">Distance / sets</label><input id="dDistance" type="text" placeholder="e.g. 8 km jog, or 3 × 1600 m"></div>
+          <div class="row">
+            <div class="field"><label for="dFull">Full time</label><input id="dFull" type="text" inputmode="decimal" autocomplete="off" placeholder="e.g. 2:02.4"></div>
+            <div class="field"><label for="d800">800 m</label><input id="d800" type="text" inputmode="decimal" autocomplete="off" placeholder="e.g. 58.2"></div>
+            <div class="field f400"><label for="d400">400 m</label><input id="d400" type="text" inputmode="decimal" autocomplete="off" placeholder="e.g. 28.6"></div>
+          </div>
+        </fieldset>
+        <fieldset class="workset" id="dSet2" hidden>
+          <legend class="heatlbl">Heat 2</legend>
+          <div class="field"><label for="dDistance2">Distance / sets</label><input id="dDistance2" type="text" placeholder="e.g. 1600 m"></div>
+          <div class="row">
+            <div class="field"><label for="dFull2">Full time</label><input id="dFull2" type="text" inputmode="decimal" autocomplete="off" placeholder="e.g. 2:01.6"></div>
+            <div class="field"><label for="d8002">800 m</label><input id="d8002" type="text" inputmode="decimal" autocomplete="off" placeholder="e.g. 58.2"></div>
+            <div class="field f400"><label for="d4002">400 m</label><input id="d4002" type="text" inputmode="decimal" autocomplete="off" placeholder="e.g. 28.4"></div>
+          </div>
+        </fieldset>
         <div class="field"><label for="dNotes">Notes (optional)</label><textarea id="dNotes" placeholder="How the horse went, gear, anything to remember"></textarea></div>
         <button class="btn primary big" type="submit">Save to diary</button>
       </form>

@@ -144,6 +144,7 @@ function bindUI(){
   mountAddForm("dad", "dAddHorseBtn", "dAddHorseSlot", "dHorse");
   mountAddForm("tad", "tAddHorseBtn", "tAddHorseSlot", "tHorse");
   $("dForm").onsubmit = saveDiary;
+  $("dType").onchange = syncWorkFields;
   $("sForm").onsubmit = saveStart;
   $("dModeWork").onclick = () => setDiaryMode("work");
   $("dModeStart").onclick = () => setDiaryMode("start");
@@ -723,7 +724,7 @@ function buildPrompt(horse, mode, win, nFrames){
     `- ${dayOf(r.at)} ${WORK[r.work]||r.work}: ${r.bpm10 ?? "?"} bpm at 10 min, ${r.bpm20 ?? "?"} at 20 min. ${hasHr(r) ? hrFlag(r).text : ""}`).join("\n");
   const wk7 = addDays(todayStr(), -7);
   const work = S.diary.filter(e => e.horseId===horse.id && e.date >= wk7).slice(0,10).map(e =>
-    `- ${e.date} ${DTYPE[e.type]||e.type}${e.distance ? ": " + e.distance : ""}${e.fullTime ? "; full time " + e.fullTime : ""}${e.time800 ? "; 800 m " + e.time800 : ""}${e.times ? "; " + e.times : ""}${e.type==="farrier" ? `; ${SHOEWORK[e.shoeWork]||""} ${e.shoeType||""}` : ""}${e.notes ? "; " + e.notes : ""}`).join("\n");
+    `- ${e.date} ${DTYPE[e.type]||e.type}${e.type !== "farrier" && diaryDetail(e) ? ": " + diaryDetail(e).replace(/\n/g, " / ") : ""}${e.type==="farrier" ? `; ${SHOEWORK[e.shoeWork]||""} ${e.shoeType||""}` : ""}${e.notes ? "; " + e.notes : ""}`).join("\n");
   const gaitNote = horse.gait === "trotter"
     ? "This horse is a TROTTER (diagonal gait: LF+RH land together, RF+LH land together)."
     : "This horse is a PACER (lateral gait: LF+LH land together, RF+RH land together). In the pace the classic head nod is harder to read because a fore and hind on the SAME side bear weight together; lean more on hip/pelvic movement, stride length, fetlock drop, and head/neck movement relative to each lateral pair. Also note if the horse breaks gait.";
@@ -899,8 +900,16 @@ function setDiaryMode(m){
   $("dModeWork").setAttribute("aria-pressed", String(m === "work")); $("dModeStart").setAttribute("aria-pressed", String(m === "start"));
   $("dForm").hidden = m !== "work"; $("sForm").hidden = m !== "start"; msg("dMsg","",true);
 }
+const SETF = ["dDistance","dFull","d800","d400"];
+/* Heats shows two sets of distance/times; 400 m for everything except a jog */
+function syncWorkFields(){
+  const t = $("dType").value, heats = t === "heats";
+  $("dSet2").hidden = !heats;
+  $("dForm").classList.toggle("is-heats", heats);
+  document.querySelectorAll("#dForm .f400").forEach(el => el.hidden = t === "jog");
+}
 function resetDiaryForm(){
-  ["dDistance","dFull","d800","dNotes"].forEach(i => $(i).value = ""); $("dDate").value = todayStr();
+  [...SETF, ...SETF.map(i => i + "2"), "dNotes"].forEach(i => $(i).value = ""); $("dDate").value = todayStr(); syncWorkFields();
   ["sVenue","sPlace","sTime","sNotes"].forEach(i => $(i).value = ""); $("sDate").value = todayStr();
 }
 async function saveDiary(e){
@@ -908,11 +917,11 @@ async function saveDiary(e){
   const horse = horseById($("dHorse").value);
   if (!horse){ msg("dMsg","Choose a horse first.", false); return; }
   const type = $("dType").value;
-  const rec = { horseId: horse.id, horseName: horse.name, date: $("dDate").value || todayStr(), type,
-    distance: $("dDistance").value.trim(), fullTime: $("dFull").value.trim(), time800: $("d800").value.trim(), notes: $("dNotes").value.trim(),
-    createdAt: new Date().toISOString() };
+  const set = (x) => ({ distance: $("dDistance" + x).value.trim(), fullTime: $("dFull" + x).value.trim(), time800: $("d800" + x).value.trim(), time400: type === "jog" ? "" : $("d400" + x).value.trim() });
+  const rec = { horseId: horse.id, horseName: horse.name, date: $("dDate").value || todayStr(), type, ...set(""), notes: $("dNotes").value.trim(), createdAt: new Date().toISOString() };
+  if (type === "heats") rec.heats = [set(""), set("2")];
   try{ await save("diary", uid("d"), rec); }catch(err){ msg("dMsg", saveErrMsg(err), false); return; }
-  msg("dMsg", `Saved ${DTYPE[type].toLowerCase()} for ${hShort(horse)} on ${fmtDay(rec.date)}.${type === "heat1" ? "" : " Add the heart rate on the entry below when you take it."}`, true);
+  msg("dMsg", `Saved ${DTYPE[type].toLowerCase()} for ${hShort(horse)} on ${fmtDay(rec.date)}. Add the heart rate on the entry below when you take it.`, true);
   resetDiaryForm();
 }
 async function saveStart(e){
@@ -928,13 +937,15 @@ async function saveStart(e){
 }
 function diaryDetail(e){
   if (e.type === "farrier") return [SHOEWORK[e.shoeWork], e.shoeType, e.farrier ? `by ${e.farrier}` : ""].filter(Boolean).join(" · ");
-  return [e.distance, e.fullTime ? `full time ${e.fullTime}` : "", e.time800 ? `800 m ${e.time800}` : "", e.times].filter(Boolean).join(" · ");
+  const one = (x) => [x.distance, x.fullTime ? `full time ${x.fullTime}` : "", x.time800 ? `800 m ${x.time800}` : "", x.time400 ? `400 m ${x.time400}` : ""].filter(Boolean).join(" · ");
+  if (Array.isArray(e.heats)) return e.heats.map((x, i) => { const d = one(x); return d ? `Heat ${i + 1}: ${d}` : ""; }).filter(Boolean).join("\n");
+  return [one(e), e.times].filter(Boolean).join(" · ");
 }
 function diaryRow(e, showHorse, delKey){
   const det = diaryDetail(e), hrBlock = ["farrier","heat1"].includes(e.type) ? "" : diaryHrHTML(e);   // heart rate is taken after the last heat, so not on Heat (1)
   return `<div class="hrrow">
     <div><span class="d mono">${esc(fmtDay(e.date))}</span>${showHorse ? ` · <b>${esc(hName(e.horseId, e.horseName))}</b>` : ""} <span class="pill ${["heats","heat1","heat2"].includes(e.type) ? "p-possible" : e.type==="fast" ? "p-lame" : "p-sound"}">${esc(DTYPE[e.type]||e.type)}</span></div>
-    ${det ? `<div class="mono small">${esc(det)}</div>` : ""}
+    ${det ? `<div class="mono small" style="white-space:pre-line">${esc(det)}</div>` : ""}
     ${hrBlock}
     ${e.notes ? `<div class="small muted">${esc(e.notes)}</div>` : ""}
     ${delKey ? delBtn("diary", e.id, delKey) : ""}
@@ -1190,7 +1201,7 @@ async function analyseHorse(h){
   btn.disabled = true; out.innerHTML = `<div class="status"><span class="spinner"></span><span>Reading ${esc(hShort(h))}'s records…</span></div>`;
   const since = addDays(todayStr(), -60);
   const lines = [];
-  S.diary.filter(e => e.horseId === h.id && e.date >= since && e.type !== "farrier").slice(0, 60).forEach(e => lines.push(`${e.date} WORK ${DTYPE[e.type]||e.type}: ${[e.distance, e.fullTime && "full time " + e.fullTime, e.time800 && "800m " + e.time800, e.times, e.notes].filter(Boolean).join("; ")}`));
+  S.diary.filter(e => e.horseId === h.id && e.date >= since && e.type !== "farrier").slice(0, 60).forEach(e => lines.push(`${e.date} WORK ${DTYPE[e.type]||e.type}: ${[diaryDetail(e).replace(/\n/g, " / "), e.notes].filter(Boolean).join("; ")}`));
   S.starts.filter(s => s.horseId === h.id && s.date >= addDays(todayStr(), -180)).forEach(s => lines.push(`${s.date} ${s.kind.toUpperCase()} at ${s.venue}${s.placing ? ", placed " + s.placing : ""}${s.time ? ", time " + s.time : ""}${s.notes ? "; " + s.notes : ""}`));
   S.hr.filter(r => r.horseId === h.id && r.at >= since && hasHr(r)).slice(0, 30).forEach(r => lines.push(`${dayOf(r.at)} HEART RATE after ${WORK[r.work]||r.work}: ${r.bpm10 ?? "?"} bpm at 10 min, ${r.bpm20 ?? "?"} at 20 min`));
   allTemps().filter(t => t.horseId === h.id && t.at >= since).slice(0, 30).forEach(t => lines.push(`${dayOf(t.at)} TEMPERATURE ${t.temp}°C`));
