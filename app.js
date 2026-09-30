@@ -17,8 +17,8 @@ const FOOTAGE = { inhand_straight:"In hand, towards/away", inhand_side:"In hand,
 const LIMBS = {LF:"Left fore", RF:"Right fore", LH:"Left hind", RH:"Right hind"};
 const VERDICT = {sound:"Looks sound", possible:"Possible lameness", lame:"Lame", unclear:"Can't tell"};
 const LEVEL = {none:"No sign", watch:"Watch", suspect:"Suspect", likely:"Likely"};
-const WORK = {jog:"Jog", canter:"Canter", fast:"Fast work", heats:"Heats", trial:"Trial / workout", race:"Race", other:"Other"};
-const DTYPE = {jog:"Jog", canter:"Canter", fast:"Fast work", heats:"Heats", track:"Trackwork", trial:"Trial", race:"Race", swim:"Swim", walker:"Walker", treadmill:"Treadmill", paddock:"Paddock / turnout", rest:"Rest day", farrier:"Shod / farrier", vet:"Vet / treatment", other:"Other"};
+const WORK = {jog:"Jog", canter:"Canter", fast:"Fast work", heats:"Heats", heat1:"Heat (1)", heat2:"Heat (2)", trial:"Trial / workout", race:"Race", other:"Other"};
+const DTYPE = {jog:"Jog", canter:"Canter", fast:"Fast work", heats:"Heats", heat1:"Heat (1)", heat2:"Heat (2)", track:"Trackwork", trial:"Trial", race:"Race", swim:"Swim", walker:"Walker", treadmill:"Treadmill", paddock:"Paddock / turnout", rest:"Rest day", farrier:"Shod / farrier", vet:"Vet / treatment", other:"Other"};
 const SHOEWORK = {full:"Full set", fronts:"Fronts only", hinds:"Hinds only", reset:"Reset", trim:"Trim only", lost:"Lost shoe replaced"};
 const horseById = (id) => S.horses.find(h => h.id === id);
 const hLabel = (h) => !h ? "" : (h.stableName && h.stableName.trim().toLowerCase() !== String(h.name||"").trim().toLowerCase()) ? `${h.stableName} (${h.name})` : h.name;
@@ -912,7 +912,7 @@ async function saveDiary(e){
     distance: $("dDistance").value.trim(), fullTime: $("dFull").value.trim(), time800: $("d800").value.trim(), notes: $("dNotes").value.trim(),
     createdAt: new Date().toISOString() };
   try{ await save("diary", uid("d"), rec); }catch(err){ msg("dMsg", saveErrMsg(err), false); return; }
-  msg("dMsg", `Saved ${DTYPE[type].toLowerCase()} for ${hShort(horse)} on ${fmtDay(rec.date)}. Add the heart rate on the entry below when you take it.`, true);
+  msg("dMsg", `Saved ${DTYPE[type].toLowerCase()} for ${hShort(horse)} on ${fmtDay(rec.date)}.${type === "heat1" ? "" : " Add the heart rate on the entry below when you take it."}`, true);
   resetDiaryForm();
 }
 async function saveStart(e){
@@ -931,9 +931,9 @@ function diaryDetail(e){
   return [e.distance, e.fullTime ? `full time ${e.fullTime}` : "", e.time800 ? `800 m ${e.time800}` : "", e.times].filter(Boolean).join(" · ");
 }
 function diaryRow(e, showHorse, delKey){
-  const det = diaryDetail(e), hrBlock = e.type === "farrier" ? "" : diaryHrHTML(e);
+  const det = diaryDetail(e), hrBlock = ["farrier","heat1"].includes(e.type) ? "" : diaryHrHTML(e);   // heart rate is taken after the last heat, so not on Heat (1)
   return `<div class="hrrow">
-    <div><span class="d mono">${esc(fmtDay(e.date))}</span>${showHorse ? ` · <b>${esc(hName(e.horseId, e.horseName))}</b>` : ""} <span class="pill ${e.type==="heats" ? "p-possible" : e.type==="fast" ? "p-lame" : "p-sound"}">${esc(DTYPE[e.type]||e.type)}</span></div>
+    <div><span class="d mono">${esc(fmtDay(e.date))}</span>${showHorse ? ` · <b>${esc(hName(e.horseId, e.horseName))}</b>` : ""} <span class="pill ${["heats","heat1","heat2"].includes(e.type) ? "p-possible" : e.type==="fast" ? "p-lame" : "p-sound"}">${esc(DTYPE[e.type]||e.type)}</span></div>
     ${det ? `<div class="mono small">${esc(det)}</div>` : ""}
     ${hrBlock}
     ${e.notes ? `<div class="small muted">${esc(e.notes)}</div>` : ""}
@@ -996,7 +996,7 @@ function renderDiaryRecent(){
   }
   renderDueBanner();
 }
-function lastWorked(horseId){ return S.diary.find(e => e.horseId === horseId && ["jog","canter","fast","heats","track"].includes(e.type)); }
+function lastWorked(horseId){ return S.diary.find(e => e.horseId === horseId && ["jog","canter","fast","heats","heat1","heat2","track"].includes(e.type)); }
 
 /* ================= shoeing + worming (care) ================= */
 const CARE = { shoe: { name: "Shoeing", verb: "shod", weeks: 6 }, worm: { name: "Worming", verb: "wormed", weeks: 12 } };
@@ -1202,7 +1202,7 @@ Horse: race name ${h.name}${h.stableName ? ", stable name " + h.stableName : ""}
 RECORDS (newest first within each type):
 ${lines.join("\n") || "No records yet."}
 
-Look for: workload pattern (how often jogged / cantered / fast work / heats, rest gaps), whether full and 800 m times are improving or slowing, heart-rate recovery trends, any raised temperatures, gait check flags, and shoeing/worming due. Only comment on what the data shows; say when there isn't enough data. Plain NZ English, no fluff. Don't diagnose; suggest checking with the vet where appropriate.
+Look for: workload pattern (how often jogged / cantered / fast work / heats — Heat (1) and Heat (2) on the same day are one heats session with heart rate taken after Heat (2) — rest gaps), whether full and 800 m times are improving or slowing, heart-rate recovery trends, any raised temperatures, gait check flags, and shoeing/worming due. Only comment on what the data shows; say when there isn't enough data. Plain NZ English, no fluff. Don't diagnose; suggest checking with the vet where appropriate.
 Reply with ONLY JSON: {"headline":"one sentence","points":["3-6 short observations"],"watch":["0-4 things to keep an eye on or do next"]}`;
   try{
     S.ctl = new AbortController();
