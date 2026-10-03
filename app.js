@@ -460,8 +460,8 @@ async function drawPicker(reseek){
     g.strokeStyle = "#00e5ff"; g.lineWidth = Math.max(3, c.width/300); g.strokeRect(b.x, b.y, b.w, b.h);
   } else {
     g.fillStyle = "rgba(0,0,0,.35)"; g.fillRect(0, c.height - c.height*0.12, c.width, c.height*0.12);
-    g.fillStyle = "#fff"; g.font = `600 ${Math.round(c.height*0.05)}px sans-serif`; g.textAlign = "center";
-    g.fillText("Drag a box around the horse", c.width/2, c.height - c.height*0.04);
+    g.fillStyle = "#fff"; g.font = `600 ${Math.round(Math.min(c.height*0.05, c.width/28))}px sans-serif`; g.textAlign = "center";
+    g.fillText("Drag a box around the horse only (not the handler)", c.width/2, c.height - c.height*0.04);
   }
 }
 function bindPicker(){
@@ -750,6 +750,7 @@ ${work ? "WORK DIARY, LAST 7 DAYS (context only):\n" + work : ""}
 ${hrs ? "HEART RATE AND TEMPERATURE IN THE LAST 3 DAYS (context only; mention it if a slow recovery or a raised temperature supports or adds to concern):\n" + hrs : ""}
 
 How to assess:
+0. A person (handler, or the driver in the cart) is usually in the footage leading, walking or running with the horse. Ignore the person completely: do not read their steps, arm swing or head bob as the horse's. Assess only the horse's head, pelvis and four legs. If the person blocks your view of the horse's legs, say so in footage issues.
 1. Work out which limbs are in stance (weight-bearing) at each moment, and identify the gait actually shown.
 2. Forelimbs: the head/poll rises when the lame fore bears weight and drops when the sound fore lands ("down on sound"). Compare head movement across equivalent stance phases of left vs right.
 3. Hindlimbs: look for hip hike / pelvic asymmetry (the tuber coxae on the lame side travels further up and down), a shorter cranial phase of stride, and reduced fetlock extension on the lame hind.
