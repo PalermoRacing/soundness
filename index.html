@@ -56,7 +56,7 @@
   <section class="panel" id="panel-diary">
     <div id="dueBanner" class="banner" hidden></div>
     <div class="card">
-      <div><h2>Work diary</h2><p class="muted small" style="margin:4px 0 0">Record each horse's work, races and trials. Everything saves to the horse's page.</p></div>
+      <div><h2>Work diary</h2><p class="muted small" style="margin:4px 0 0">Record each horse's work, races and trials, and vet visits or other charges to invoice. Everything saves to the horse's page.</p></div>
       <div class="row">
         <div class="field"><label for="dHorse">Horse</label><select id="dHorse"></select></div>
         <button class="btn" id="dAddHorseBtn" type="button">+ Add horse</button>
@@ -65,6 +65,7 @@
       <div class="toggle" role="group" aria-label="Entry type">
         <button type="button" id="dModeWork" aria-pressed="true">Work</button>
         <button type="button" id="dModeStart" aria-pressed="false">Race / trial</button>
+        <button type="button" id="dModeCharge" aria-pressed="false">Vet / charge</button>
       </div>
       <form id="dForm" style="display:flex;flex-direction:column;gap:12px">
         <div class="row">
@@ -114,6 +115,20 @@
           <div class="field billamt"><label for="sBillAmt">Amount ($)</label><input id="sBillAmt" type="text" inputmode="decimal" autocomplete="off" placeholder="0.00"></div>
         </div>
         <button class="btn primary big" type="submit">Save race / trial</button>
+      </form>
+      <form id="xForm" hidden style="display:flex;flex-direction:column;gap:12px">
+        <div class="row">
+          <div class="field"><label for="xKind">What for</label><select id="xKind">
+            <option value="vet">Vet</option><option value="dentist">Dentist</option><option value="physio">Physio / chiro</option><option value="medication">Medication</option>
+            <option value="transport">Float / transport</option><option value="nominations">Nominations / fees</option><option value="gear">Gear</option><option value="other">Other</option></select></div>
+          <div class="field"><label for="xDate">Date</label><input id="xDate" type="date" required></div>
+        </div>
+        <div class="row billrow">
+          <div class="field"><label for="xDesc">Details</label><input id="xDesc" type="text" autocomplete="off" placeholder="e.g. Vet visit – scoped, antibiotics"></div>
+          <div class="field billamt"><label for="xAmt">Amount ($)</label><input id="xAmt" type="text" inputmode="decimal" autocomplete="off" placeholder="0.00"></div>
+        </div>
+        <label class="small" style="display:flex;gap:8px;align-items:center;font-weight:400"><input type="checkbox" id="xInv"> Already invoiced</label>
+        <button class="btn primary big" type="submit">Save charge</button>
       </form>
       <div id="dMsg" class="small" hidden></div>
     </div>

@@ -19,6 +19,7 @@ const VERDICT = {sound:"Looks sound", possible:"Possible lameness", lame:"Lame",
 const LEVEL = {none:"No sign", watch:"Watch", suspect:"Suspect", likely:"Likely"};
 const WORK = {jog:"Jog", canter:"Canter", fast:"Fast work", heats:"Heats", heat1:"Heat (1)", heat2:"Heat (2)", trial:"Trial / workout", race:"Race", other:"Other"};
 const DTYPE = {jog:"Jog", canter:"Canter", fast:"Fast work", heats:"Heats", heat1:"Heat (1)", heat2:"Heat (2)", track:"Trackwork", trial:"Trial", race:"Race", swim:"Swim", walker:"Walker", treadmill:"Treadmill", paddock:"Paddock / turnout", rest:"Rest day", farrier:"Shod / farrier", vet:"Vet / treatment", other:"Other"};
+const CHARGE = {vet:"Vet", dentist:"Dentist", physio:"Physio / chiro", medication:"Medication", transport:"Float / transport", nominations:"Nominations / fees", gear:"Gear", other:"Other"};
 const SHOEWORK = {full:"Full set", fronts:"Fronts only", hinds:"Hinds only", reset:"Reset", trim:"Trim only", lost:"Lost shoe replaced"};
 const horseById = (id) => S.horses.find(h => h.id === id);
 const hLabel = (h) => !h ? "" : (h.stableName && h.stableName.trim().toLowerCase() !== String(h.name||"").trim().toLowerCase()) ? `${h.stableName} (${h.name})` : h.name;
@@ -29,7 +30,7 @@ const addDays = (str, n) => { const d = new Date(str + "T12:00:00"); d.setDate(d
 const fmtDay = (str) => { try { return new Date(str + "T12:00:00").toLocaleDateString("en-NZ", {weekday:"short", day:"numeric", month:"short", year:"numeric"}); } catch(_){ return str; } };
 
 const S = { fs:null, auth:null, me:null, horses:[], checks:[], hr:[], settings:{}, unsubs:[],
-  diary:[], trash:[], temps:[], starts:[], care:[], supps:[], diaryMode:"work", invMonth:null, showAllDiary:false, editHorse:false,
+  diary:[], trash:[], temps:[], starts:[], charges:[], care:[], supps:[], diaryMode:"work", invMonth:null, showAllDiary:false, editHorse:false,
   file:null, segStart:0, ctl:null, openHorse:null, openCheck:null, prevTab:"diary" };
 
 /* ================= boot & auth ================= */
@@ -83,6 +84,10 @@ function startData(){
   S.unsubs.push(onSnapshot(query(collection(S.fs,"temps"), orderBy("at","desc"), limit(2000)), snap => {
     S.temps = snap.docs.map(d => ({id:d.id, ...d.data()}));
     renderTempRecent(); renderHorses();
+  }, denied));
+  S.unsubs.push(onSnapshot(query(collection(S.fs,"charges"), orderBy("date","desc"), limit(2000)), snap => {
+    S.charges = snap.docs.map(d => ({id:d.id, ...d.data()})).sort((a,b) => (b.date||"").localeCompare(a.date||"") || (b.createdAt||"").localeCompare(a.createdAt||""));
+    renderDiaryRecent(); renderHorses();
   }, denied));
   S.unsubs.push(onSnapshot(query(collection(S.fs,"starts"), orderBy("date","desc"), limit(1000)), snap => {
     S.starts = snap.docs.map(d => ({id:d.id, ...d.data()}));
@@ -148,6 +153,8 @@ function bindUI(){
   $("sForm").onsubmit = saveStart;
   $("dModeWork").onclick = () => setDiaryMode("work");
   $("dModeStart").onclick = () => setDiaryMode("start");
+  $("dModeCharge").onclick = () => setDiaryMode("charge");
+  $("xForm").onsubmit = saveCharge;
   $("tForm").onsubmit = saveTemp;
   $("suppForm").onsubmit = addSupp;
   resetDiaryForm(); setDiaryMode("work");
@@ -335,7 +342,7 @@ function bindDeletes(root, key, after){
 
 /* ================= recently deleted (30-day bin) ================= */
 const TRASH_DAYS = 30;
-const COLS = { diary: () => S.diary, hr: () => S.hr, temps: () => S.temps, starts: () => S.starts, care: () => S.care, checks: () => S.checks, horses: () => S.horses };
+const COLS = { diary: () => S.diary, hr: () => S.hr, temps: () => S.temps, starts: () => S.starts, charges: () => S.charges, care: () => S.care, checks: () => S.checks, horses: () => S.horses };
 function findRec(col, id){ return (COLS[col]?.() || []).find(r => r.id === id); }
 function describeRec(col, r){
   if (!r) return "Entry";
@@ -345,6 +352,7 @@ function describeRec(col, r){
     hr: () => ["Heart rate", nm, fmtDay(dayOf(r.at))],
     temps: () => [`Temperature ${r.temp}°C`, nm, fmtDay(dayOf(r.at))],
     starts: () => [`${r.kind === "race" ? "Race" : "Trial"} at ${r.venue}`, nm, fmtDay(r.date)],
+    charges: () => [`${CHARGE[r.kind] || "Charge"}${r.billAmount != null ? " " + money(r.billAmount) : ""}`, nm, fmtDay(r.date)],
     care: () => [r.kind === "worm" ? "Worming" : "Shoeing", nm, fmtDay(r.date)],
     checks: () => ["Gait check", nm, fmtDate(r.createdAt)],
     horses: () => [hShort(r)],
@@ -897,8 +905,8 @@ function renderLatestOrExample(){
 /* ================= work diary + races/trials ================= */
 function setDiaryMode(m){
   S.diaryMode = m;
-  $("dModeWork").setAttribute("aria-pressed", String(m === "work")); $("dModeStart").setAttribute("aria-pressed", String(m === "start"));
-  $("dForm").hidden = m !== "work"; $("sForm").hidden = m !== "start"; msg("dMsg","",true);
+  $("dModeWork").setAttribute("aria-pressed", String(m === "work")); $("dModeStart").setAttribute("aria-pressed", String(m === "start")); $("dModeCharge").setAttribute("aria-pressed", String(m === "charge"));
+  $("dForm").hidden = m !== "work"; $("sForm").hidden = m !== "start"; $("xForm").hidden = m !== "charge"; msg("dMsg","",true);
 }
 const SETF = ["dDistance","dFull","d800","d400"];
 /* Heats shows two sets of distance/times; 400 m for everything except a jog */
@@ -913,6 +921,7 @@ function syncWorkFields(){
 function resetDiaryForm(){
   [...SETF, ...SETF.map(i => i + "2"), "dMins", "dNotes", "dBill", "dBillAmt"].forEach(i => $(i).value = ""); $("dDate").value = todayStr(); syncWorkFields();
   ["sVenue","sPlace","sTime","sNotes","sBill","sBillAmt"].forEach(i => $(i).value = ""); $("sDate").value = todayStr();
+  ["xDesc","xAmt"].forEach(i => $(i).value = ""); $("xInv").checked = false; $("xDate").value = todayStr();
 }
 async function saveDiary(e){
   e.preventDefault();
@@ -1007,6 +1016,29 @@ function bindBills(root){
     catch(err){ alertBox("storeNote", saveErrMsg(err)); }
   });
 }
+/* vet visits and other charges to on-charge (not tied to a work entry) */
+async function saveCharge(e){
+  e.preventDefault();
+  const horse = horseById($("dHorse").value);
+  if (!horse){ msg("dMsg","Choose a horse first.", false); return; }
+  const kind = $("xKind").value, desc = $("xDesc").value.trim(), av = $("xAmt").value.trim().replace("$", "").replace(",", ".");
+  const amount = av === "" ? null : Math.round(parseFloat(av) * 100) / 100;
+  if (av !== "" && (isNaN(amount) || amount < 0)){ msg("dMsg", "Enter the amount as a number, e.g. 85.00", false); return; }
+  if (!desc && amount == null){ msg("dMsg", "Add the details or the amount.", false); return; }
+  const inv = $("xInv").checked;
+  const rec = { horseId: horse.id, horseName: horse.name, date: $("xDate").value || todayStr(), kind, billNote: desc || CHARGE[kind], billAmount: amount,
+    billInvoiced: inv, billInvoicedAt: inv ? new Date().toISOString() : "", createdAt: new Date().toISOString() };
+  try{ await save("charges", uid("b"), rec); }catch(err){ msg("dMsg", saveErrMsg(err), false); return; }
+  msg("dMsg", `Saved ${CHARGE[kind].toLowerCase()} charge for ${hShort(horse)} on ${fmtDay(rec.date)}${inv ? "" : ". It's on the Not yet invoiced list in Horses"}.`, true);
+  resetDiaryForm();
+}
+function chargeRow(c, showHorse, delKey){
+  return `<div class="hrrow">
+    <div><span class="d mono">${esc(fmtDay(c.date))}</span>${showHorse ? ` · <b>${esc(hName(c.horseId, c.horseName))}</b>` : ""} <span class="pill p-unclear">${esc(CHARGE[c.kind] || "Charge")}</span></div>
+    ${billHTML("charges", c)}
+    ${delKey ? delBtn("charges", c.id, delKey) : ""}
+  </div>`;
+}
 function startRow(s, showHorse, delKey){
   const det = [s.placing ? `placed ${s.placing}` : "", s.time ? `time ${s.time}` : ""].filter(Boolean).join(" · ");
   return `<div class="hrrow">
@@ -1021,14 +1053,15 @@ function renderDiaryRecent(){
   const box = $("dRecent"); if (!box) return;
   const since = addDays(todayStr(), -14);
   const items = [...S.diary.filter(e => e.date >= since && e.type !== "farrier").map(e => ({k: "d", date: e.date, e})),
-                 ...S.starts.filter(s => s.date >= since).map(s => ({k: "s", date: s.date, e: s}))]
+                 ...S.starts.filter(s => s.date >= since).map(s => ({k: "s", date: s.date, e: s})),
+                 ...S.charges.filter(c => c.date >= since).map(c => ({k: "c", date: c.date, e: c}))]
     .sort((a, b) => b.date.localeCompare(a.date)).slice(0, 60);
   if (!items.length){ box.innerHTML = `<p class="muted small" style="margin:0">Nothing in the last two weeks yet. Entries you save show here and on each horse's page.</p>`; }
   else {
     let html = "", day = "";
     for (const it of items){
       if (it.date !== day){ day = it.date; html += `<h3 style="margin:10px 0 0;font-size:16px">${esc(fmtDay(day))}${day===todayStr()?" · Today":""}</h3>`; }
-      html += it.k === "d" ? diaryRow(it.e, true, "r") : startRow(it.e, true, "r");
+      html += it.k === "d" ? diaryRow(it.e, true, "r") : it.k === "c" ? chargeRow(it.e, true, "r") : startRow(it.e, true, "r");
     }
     box.innerHTML = html;
     bindDeletes(box, "r", renderDiaryRecent); bindDiaryHr(box); bindBills(box);
@@ -1129,7 +1162,7 @@ function renderCareOverview(){
   const month = S.invMonth || todayStr().slice(0,7);
   const uninv = [...careRecords(null, "shoe"), ...careRecords(null, "worm")].filter(c => !c.invoiced && (month === "all" || (c.date||"").slice(0,7) === month))
     .sort((a, b) => (a.date||"").localeCompare(b.date||""));
-  const bills = [...S.diary.filter(hasBill).map(r => ({ col: "diary", r, what: DTYPE[r.type] || r.type })), ...S.starts.filter(hasBill).map(r => ({ col: "starts", r, what: `${r.kind === "race" ? "Race" : "Trial"} at ${r.venue}` }))];
+  const bills = [...S.diary.filter(hasBill).map(r => ({ col: "diary", r, what: DTYPE[r.type] || r.type })), ...S.starts.filter(hasBill).map(r => ({ col: "starts", r, what: `${r.kind === "race" ? "Race" : "Trial"} at ${r.venue}` })), ...S.charges.filter(hasBill).map(r => ({ col: "charges", r, what: CHARGE[r.kind] || "Charge" }))];
   const ubills = bills.filter(b => !b.r.billInvoiced && (month === "all" || (b.r.date||"").slice(0,7) === month)).sort((a, b) => (a.r.date||"").localeCompare(b.r.date||""));
   const months = [...new Set([...careRecords(null, "shoe"), ...careRecords(null, "worm"), ...bills.map(b => b.r)].map(c => (c.date||"").slice(0,7)).filter(Boolean))].sort().reverse();
   if (!months.includes(month) && month !== "all") months.unshift(month);
@@ -1234,6 +1267,7 @@ async function analyseHorse(h){
   const since = addDays(todayStr(), -60);
   const lines = [];
   S.diary.filter(e => e.horseId === h.id && e.date >= since && e.type !== "farrier").slice(0, 60).forEach(e => lines.push(`${e.date} WORK ${DTYPE[e.type]||e.type}: ${[diaryDetail(e).replace(/\n/g, " / "), e.notes].filter(Boolean).join("; ")}`));
+  S.charges.filter(c => c.horseId === h.id && c.date >= since && ["vet","dentist","physio","medication"].includes(c.kind)).forEach(c => lines.push(`${c.date} ${(CHARGE[c.kind]||"").toUpperCase()}: ${c.billNote || ""}`));
   S.starts.filter(s => s.horseId === h.id && s.date >= addDays(todayStr(), -180)).forEach(s => lines.push(`${s.date} ${s.kind.toUpperCase()} at ${s.venue}${s.placing ? ", placed " + s.placing : ""}${s.time ? ", time " + s.time : ""}${s.notes ? "; " + s.notes : ""}`));
   S.hr.filter(r => r.horseId === h.id && r.at >= since && hasHr(r)).slice(0, 30).forEach(r => lines.push(`${dayOf(r.at)} HEART RATE after ${WORK[r.work]||r.work}: ${r.bpm10 ?? "?"} bpm at 10 min, ${r.bpm20 ?? "?"} at 20 min`));
   allTemps().filter(t => t.horseId === h.id && t.at >= since).slice(0, 30).forEach(t => lines.push(`${dayOf(t.at)} TEMPERATURE ${t.temp}°C`));
@@ -1302,7 +1336,7 @@ function renderHorseDetail(){
   const h = horseById(S.openHorse);
   if (!h){ S.openHorse = null; renderHorses(); return; }
   const hc = S.checks.filter(c=>c.horseId===h.id), hh = S.hr.filter(r=>r.horseId===h.id && hasHr(r)), ht = allTemps().filter(t => t.horseId === h.id);
-  const hd = S.diary.filter(e=>e.horseId===h.id && e.type !== "farrier"), hs = S.starts.filter(s => s.horseId === h.id);
+  const hd = S.diary.filter(e=>e.horseId===h.id && e.type !== "farrier"), hs = S.starts.filter(s => s.horseId === h.id), hx = S.charges.filter(c => c.horseId === h.id);
   if (S.openCheck){
     const c = hc.find(x=>x.id===S.openCheck);
     if (c){
@@ -1327,6 +1361,7 @@ function renderHorseDetail(){
       <div class="row">
         <button class="btn primary" type="button" id="diaryThis">+ Work</button>
         <button class="btn" type="button" id="startThis">+ Race / trial</button>
+        <button class="btn" type="button" id="chargeThis">+ Vet / charge</button>
         <button class="btn" type="button" id="tempThis">+ Temp</button>
         <button class="btn" type="button" id="checkThis">Gait check</button>
         <button class="btn" type="button" id="editThis">Edit horse</button>
@@ -1358,6 +1393,12 @@ function renderHorseDetail(){
         : `<p class="muted small" style="margin:0">No work recorded yet.</p>`}
     </div>
 
+    <div class="card"><div class="topline"><h3>Vet &amp; other charges</h3><button class="link" type="button" id="chargeThis2">+ Add charge</button></div>
+      ${hx.length ? `<div class="history">${hx.slice(0, 20).map(c => chargeRow(c, false, "x")).join("")}</div>
+        ${hx.some(c => !c.billInvoiced && c.billAmount != null) ? `<p class="small" style="margin:0">Not yet invoiced: <b class="mono">${money(hx.filter(c => !c.billInvoiced).reduce((a, c) => a + (c.billAmount || 0), 0))}</b></p>` : ""}`
+        : `<p class="muted small" style="margin:0">No vet visits or other charges recorded.</p>`}
+    </div>
+
     <div class="card"><div class="topline"><h3>Races &amp; trials</h3><button class="link" type="button" id="startThis2">+ Add</button></div>
       ${hs.length ? `<div class="history">${hs.slice(0, 20).map(s => startRow(s, false, "s")).join("")}</div>` : `<p class="muted small" style="margin:0">No races or trials recorded yet.</p>`}
     </div>
@@ -1382,6 +1423,7 @@ function renderHorseDetail(){
   $("backAll").onclick = () => { S.openHorse = null; S.editHorse = false; renderHorses(); };
   $("diaryThis").onclick = $("diaryThis2").onclick = () => openDiaryFor(h, "work");
   $("startThis").onclick = $("startThis2").onclick = () => openDiaryFor(h, "start");
+  $("chargeThis").onclick = $("chargeThis2").onclick = () => openDiaryFor(h, "charge");
   $("checkThis").onclick = () => { $("horseSel").value = h.id; updateAnalyseBtn(); showTab("check"); };
   $("tempThis").onclick = () => { $("tHorse").value = h.id; msg("tMsg","",true); showTab("temp"); };
   $("aiBtn").onclick = () => analyseHorse(h);
@@ -1406,13 +1448,13 @@ function renderHorseDetail(){
     catch(err){ msg("eMsg", saveErrMsg(err), false); }
   };
   if ($("diaryMore")) $("diaryMore").onclick = () => { S.showAllDiary = !S.showAllDiary; rerender(); };
-  ["w","s","t","h","cshoe","cworm"].forEach(k => bindDeletes(d, k, rerender)); bindDiaryHr(d); bindBills(d);
+  ["w","s","x","t","h","cshoe","cworm"].forEach(k => bindDeletes(d, k, rerender)); bindDiaryHr(d); bindBills(d);
   bindInvoice(d);
   d.querySelectorAll("[data-check]").forEach(b => b.onclick = () => { S.openCheck = b.dataset.check; rerender(); window.scrollTo(0,0); });
   $("delHorse").onclick = () => confirmIn($("delHWrap"), `Delete ${hShort(h)} and all their records? You can restore them from Recently deleted in Settings for 30 days.`, async () => {
     try{
       const jobs = [...hc.map(c => ["checks", c.id]), ...S.hr.filter(r => r.horseId===h.id).map(r => ["hr", r.id]), ...S.temps.filter(t => t.horseId===h.id).map(t => ["temps", t.id]),
-        ...S.diary.filter(e => e.horseId===h.id).map(e => ["diary", e.id]), ...hs.map(s => ["starts", s.id]), ...S.care.filter(c => c.horseId===h.id).map(c => ["care", c.id])];
+        ...S.diary.filter(e => e.horseId===h.id).map(e => ["diary", e.id]), ...hs.map(s => ["starts", s.id]), ...hx.map(c => ["charges", c.id]), ...S.care.filter(c => c.horseId===h.id).map(c => ["care", c.id])];
       await trashAndRemove([["horses", h.id], ...jobs], `${hShort(h)} and all their records (${jobs.length})`);
       S.openHorse = null; S.editHorse = false; renderHorses();
     }catch(err){ alertBox("storeNote", saveErrMsg(err)); }

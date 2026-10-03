@@ -149,7 +149,7 @@ nav.tabs button{font-size:14px;letter-spacing:.03em;white-space:nowrap;padding-i
 .mtable th,.mtable td{border-bottom:1px solid var(--line);padding:6px 8px;text-align:left;white-space:nowrap}
 .mtable th{font-weight:600;color:var(--muted)}
 .toggle{display:flex;border:1px solid var(--line);border-radius:10px;overflow:hidden;align-self:flex-start}
-.toggle button{border:0;background:transparent;padding:9px 16px;font:inherit;font-weight:600;color:var(--muted);cursor:pointer;min-height:40px}
+.toggle button{border:0;background:transparent;padding:9px 12px;white-space:nowrap;font:inherit;font-weight:600;color:var(--muted);cursor:pointer;min-height:40px}
 .toggle button[aria-pressed="true"]{background:var(--accent);color:var(--accent-ink)}
 .supps{display:flex;flex-wrap:wrap;gap:8px}
 .supp{display:flex;align-items:center;gap:8px;border:1px solid var(--line);border-radius:999px;padding:6px 12px;font-weight:400;font-size:15px;cursor:pointer}
