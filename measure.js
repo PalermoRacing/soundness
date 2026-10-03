@@ -55,7 +55,7 @@
   /* ---------- pose on one frame ---------- */
   const S = 256, MEAN = [123.675,116.28,103.53], STD = [58.395,57.12,57.375];
   let cropC = null;
-  async function pose(sess, src, box){
+  async function pose(sess, src, box, mask = true){
     const cx = box.x + box.w/2, cy = box.y + box.h/2, side = Math.max(box.w, box.h) * 1.1;
     cropC = cropC || document.createElement("canvas"); cropC.width = S; cropC.height = S;
     const g = cropC.getContext("2d", { willReadFrequently: true });
@@ -63,14 +63,14 @@
     g.drawImage(src, cx - side/2, cy - side/2, side, side, 0, 0, S, S);
     // black out everything outside the horse's box, so a handler walking or running
     // beside the horse isn't in the picture the pose model sees
-    const sc = S / side, mp = 0.06;
+    const sc = S / side, mp = 0.15;
     const mx0 = (box.x - box.w*mp - (cx - side/2)) * sc, mx1 = (box.x + box.w*(1+mp) - (cx - side/2)) * sc;
     const my0 = (box.y - box.h*mp - (cy - side/2)) * sc, my1 = (box.y + box.h*(1+mp) - (cy - side/2)) * sc;
     g.fillStyle = "#000";
-    if (mx0 > 0) g.fillRect(0, 0, mx0, S);
-    if (mx1 < S) g.fillRect(mx1, 0, S - mx1, S);
-    if (my0 > 0) g.fillRect(0, 0, S, my0);
-    if (my1 < S) g.fillRect(0, my1, S, S - my1);
+    if (mask && mx0 > 0) g.fillRect(0, 0, mx0, S);
+    if (mask && mx1 < S) g.fillRect(mx1, 0, S - mx1, S);
+    if (mask && my0 > 0) g.fillRect(0, 0, S, my0);
+    if (mask && my1 < S) g.fillRect(0, my1, S, S - my1);
     const d = g.getImageData(0,0,S,S).data, f = new Float32Array(3*S*S);
     for (let i = 0; i < S*S; i++){
       f[i] = (d[i*4]-MEAN[0])/STD[0]; f[S*S+i] = (d[i*4+1]-MEAN[1])/STD[1]; f[2*S*S+i] = (d[i*4+2]-MEAN[2])/STD[2];
@@ -97,16 +97,21 @@
     try { await video.play(); video.pause(); } catch(_){}
     const n = Math.max(1, Math.floor((end - start) * fps));
     const frames = []; let b = { ...box }, lost = 0; const t0 = performance.now();
-    const ar0 = box.w / box.h;   // the horse's shape in the box you drew; the box keeps roughly this shape so it can't stretch sideways onto the handler
     for (let i = 0; i < n; i++){
       if (signal?.aborted) throw { name: "AbortError" };
       const t = start + i / fps;
       await seekTo(video, t);
-      const kp = await pose(sess, video, b);
-      // ignore any point that lands outside the horse's box (e.g. on the handler's legs)
-      const inX0 = b.x - b.w*0.04, inX1 = b.x + b.w*1.04, inY0 = b.y - b.h*0.04, inY1 = b.y + b.h*1.04;
-      kp.forEach(p => { if (p.x < inX0 || p.x > inX1 || p.y < inY0 || p.y > inY1) p.s = 0; });
-      const conf = kp.reduce((a, p) => a + p.s, 0) / 17;
+      // first look only inside the horse's box (so a handler beside the horse is hidden);
+      // if that loses the horse (it moved out of the box, or the box is too tight), look again at the whole area
+      const inBox = (kp, m) => { const x0 = b.x - b.w*m, x1 = b.x + b.w*(1+m), y0 = b.y - b.h*m, y1 = b.y + b.h*(1+m);
+        kp.forEach(p => { if (p.x < x0 || p.x > x1 || p.y < y0 || p.y > y1) p.s = 0; }); return kp; };
+      const score = (kp) => ({ good: kp.filter(p => p.s > 0.3).length, conf: kp.reduce((a, p) => a + p.s, 0) / 17 });
+      let kp = inBox(await pose(sess, video, b, true), 0.15), sc = score(kp);
+      if (sc.good < 10 || sc.conf < 0.35){
+        const kp2 = await pose(sess, video, b, false), sc2 = score(kp2);
+        if (sc2.conf > sc.conf + 0.05){ kp = kp2; sc = sc2; }
+      }
+      const conf = sc.conf;
       frames.push({ t, kp, box: { ...b }, conf });
       const good = kp.filter(p => p.s > 0.3);
       if (good.length >= 6 && conf > 0.25){
@@ -118,7 +123,6 @@
         // limit how fast the box can change so one bad frame can't lose the horse
         const lim = (a, bb, r) => Math.max(a*(1-r), Math.min(a*(1+r), bb));
         nb.w = lim(b.w, nb.w, 0.12); nb.h = lim(b.h, nb.h, 0.12);
-        { const c = nb.x + nb.w/2, ar = nb.w / nb.h; if (ar > ar0*1.25) nb.w = nb.h*ar0*1.25; else if (ar < ar0*0.8) nb.w = nb.h*ar0*0.8; nb.x = c - nb.w/2; }
         const ncx = nb.x + nb.w/2, ncy = nb.y + nb.h/2, ocx = b.x + b.w/2, ocy = b.y + b.h/2;
         const k = 0.6, cx = ocx + (ncx - ocx)*k, cy = ocy + (ncy - ocy)*k, w2 = b.w + (nb.w - b.w)*k, h2 = b.h + (nb.h - b.h)*k;
         b = { x: cx - w2/2, y: cy - h2/2, w: w2, h: h2 };
