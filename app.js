@@ -422,10 +422,17 @@ function segWindow(){
   const len = Math.min(+lenSel, dur);
   return {start:Math.min(S.segStart, Math.max(0, dur - len)), len};
 }
+/* remember how fast this device tracks, to show how long a check will take */
+function perFrameMs(){ try{ return +localStorage.getItem("gcPerFrameMs") || 0; }catch(_){ return 0; } }
+function trackEstimate(len){
+  const ms = perFrameMs(); if (!ms) return "";
+  const mins = len * 25 * ms / 60000;
+  return ` · about <b>${mins < 1 ? "1 minute" : Math.round(mins) + " minutes"}</b> to check on this device${mins > 6 ? ". Pick a shorter section to make it quicker" : ""}`;
+}
 function updateSegInfo(){
   const {start,len} = segWindow(), d = clipDuration();
   $("segInfo").innerHTML = d
-    ? `Using <span class="mono">${start.toFixed(1)}s – ${(start+len).toFixed(1)}s</span> of a <span class="mono">${d.toFixed(1)}s</span> clip · <span class="mono">${(S.file.size/1048576).toFixed(0)} MB</span>`
+    ? `Using <span class="mono">${start.toFixed(1)}s – ${(start+len).toFixed(1)}s</span> of a <span class="mono">${d.toFixed(1)}s</span> clip · <span class="mono">${(S.file.size/1048576).toFixed(0)} MB</span>${trackEstimate(len)}`
     : "Loading video…";
 }
 function loadVideo(f){
@@ -524,12 +531,14 @@ async function measure(){
     const frames = await Measure.track({ video: v, start: win.start, end: win.start + win.len, box: S.box, fps, signal: S.ctl.signal,
       onStatus: (t, p) => setStatus(t, p ?? 0),
       onFrame: ({ i, n, kp, box, eta, ep }) => {
+        if (i === 1) S.trackT0 = Date.now();
         tv.width = Math.min(960, v.videoWidth); tv.height = Math.round(tv.width * v.videoHeight / v.videoWidth);
         const g = tv.getContext("2d"), k = tv.width / v.videoWidth; g.setTransform(1,0,0,1,0,0); g.drawImage(v, 0, 0, tv.width, tv.height);
         g.setTransform(k,0,0,k,0,0); Measure.draw(g, kp, box); g.setTransform(1,0,0,1,0,0);
         if (i === 1 || i === Math.round(n/3) || i === Math.round(2*n/3) || i === n) snaps.push(thumbFromCanvas(tv));
         setStatus(`Tracking the horse… frame ${i} of ${n}, about ${eta}s to go${ep === "webgpu" ? "" : " (slower mode on this device)"}`, i/n);
       } });
+    try{ const tracked = Date.now() - S.trackT0; if (frames.length > 20) localStorage.setItem("gcPerFrameMs", String(Math.round(tracked / (frames.length - 1)))); }catch(_){}
     setStatus("Measuring the strides…");
     const a = Measure.analyse(frames, { fps, direction: $("mDir").value });
     const result = Measure.report(a, horse.gait);

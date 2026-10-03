@@ -107,7 +107,7 @@
         kp.forEach(p => { if (p.x < x0 || p.x > x1 || p.y < y0 || p.y > y1) p.s = 0; }); return kp; };
       const score = (kp) => ({ good: kp.filter(p => p.s > 0.3).length, conf: kp.reduce((a, p) => a + p.s, 0) / 17 });
       let kp = inBox(await pose(sess, video, b, true), 0.15), sc = score(kp);
-      if (sc.good < 10 || sc.conf < 0.35){
+      if (sc.good < 6 || sc.conf < 0.25){   // only re-check frames where the horse was actually lost, so it stays quick
         const kp2 = await pose(sess, video, b, false), sc2 = score(kp2);
         if (sc2.conf > sc.conf + 0.05){ kp = kp2; sc = sc2; }
       }
