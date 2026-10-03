@@ -906,11 +906,13 @@ function syncWorkFields(){
   const t = $("dType").value, heats = t === "heats";
   $("dSet2").hidden = !heats;
   $("dForm").classList.toggle("is-heats", heats);
-  document.querySelectorAll("#dForm .f400").forEach(el => el.hidden = t === "jog");
+  const jog = t === "jog";   // a jog is just minutes: no distance, times or heart rate
+  document.querySelectorAll("#dSet1 .fwork").forEach(el => el.hidden = jog);
+  document.querySelectorAll("#dSet1 .fmins").forEach(el => el.hidden = !jog);
 }
 function resetDiaryForm(){
-  [...SETF, ...SETF.map(i => i + "2"), "dNotes"].forEach(i => $(i).value = ""); $("dDate").value = todayStr(); syncWorkFields();
-  ["sVenue","sPlace","sTime","sNotes"].forEach(i => $(i).value = ""); $("sDate").value = todayStr();
+  [...SETF, ...SETF.map(i => i + "2"), "dMins", "dNotes", "dBill", "dBillAmt"].forEach(i => $(i).value = ""); $("dDate").value = todayStr(); syncWorkFields();
+  ["sVenue","sPlace","sTime","sNotes","sBill","sBillAmt"].forEach(i => $(i).value = ""); $("sDate").value = todayStr();
 }
 async function saveDiary(e){
   e.preventDefault();
@@ -918,10 +920,11 @@ async function saveDiary(e){
   if (!horse){ msg("dMsg","Choose a horse first.", false); return; }
   const type = $("dType").value;
   const set = (x) => ({ distance: $("dDistance" + x).value.trim(), fullTime: $("dFull" + x).value.trim(), time800: $("d800" + x).value.trim(), time400: type === "jog" ? "" : $("d400" + x).value.trim() });
-  const rec = { horseId: horse.id, horseName: horse.name, date: $("dDate").value || todayStr(), type, ...set(""), notes: $("dNotes").value.trim(), createdAt: new Date().toISOString() };
+  const rec = { horseId: horse.id, horseName: horse.name, date: $("dDate").value || todayStr(), type, ...(type === "jog" ? { minutes: $("dMins").value.trim() ? Math.round(+$("dMins").value) : null } : set("")), notes: $("dNotes").value.trim(), createdAt: new Date().toISOString() };
   if (type === "heats") rec.heats = [set(""), set("2")];
+  const bill = readBill("d"); if (bill === false) return; Object.assign(rec, bill);
   try{ await save("diary", uid("d"), rec); }catch(err){ msg("dMsg", saveErrMsg(err), false); return; }
-  msg("dMsg", `Saved ${DTYPE[type].toLowerCase()} for ${hShort(horse)} on ${fmtDay(rec.date)}. Add the heart rate on the entry below when you take it.`, true);
+  msg("dMsg", `Saved ${DTYPE[type].toLowerCase()} for ${hShort(horse)} on ${fmtDay(rec.date)}.${type === "jog" ? "" : " Add the heart rate on the entry below when you take it."}`, true);
   resetDiaryForm();
 }
 async function saveStart(e){
@@ -931,6 +934,7 @@ async function saveStart(e){
   const venue = $("sVenue").value.trim(); if (!venue){ msg("dMsg","Enter where it was.", false); return; }
   const rec = { horseId: horse.id, horseName: horse.name, kind: $("sKind").value, date: $("sDate").value || todayStr(), venue,
     placing: $("sPlace").value.trim(), time: $("sTime").value.trim(), notes: $("sNotes").value.trim(), createdAt: new Date().toISOString() };
+  const bill = readBill("s"); if (bill === false) return; Object.assign(rec, bill);
   try{ await save("starts", uid("s"), rec); }catch(err){ msg("dMsg", saveErrMsg(err), false); return; }
   msg("dMsg", `Saved ${rec.kind} at ${venue} for ${hShort(horse)} on ${fmtDay(rec.date)}.`, true);
   resetDiaryForm();
@@ -939,15 +943,16 @@ function diaryDetail(e){
   if (e.type === "farrier") return [SHOEWORK[e.shoeWork], e.shoeType, e.farrier ? `by ${e.farrier}` : ""].filter(Boolean).join(" · ");
   const one = (x) => [x.distance, x.fullTime ? `full time ${x.fullTime}` : "", x.time800 ? `800 m ${x.time800}` : "", x.time400 ? `400 m ${x.time400}` : ""].filter(Boolean).join(" · ");
   if (Array.isArray(e.heats)) return e.heats.map((x, i) => { const d = one(x); return d ? `Heat ${i + 1}: ${d}` : ""; }).filter(Boolean).join("\n");
-  return [one(e), e.times].filter(Boolean).join(" · ");
+  return [e.minutes != null ? `${e.minutes} min` : "", one(e), e.times].filter(Boolean).join(" · ");
 }
 function diaryRow(e, showHorse, delKey){
-  const det = diaryDetail(e), hrBlock = ["farrier","heat1"].includes(e.type) ? "" : diaryHrHTML(e);   // heart rate is taken after the last heat, so not on Heat (1)
+  const det = diaryDetail(e), hrBlock = ["farrier","heat1"].includes(e.type) || (e.type === "jog" && !S.hr.some(r => r.diaryId === e.id)) ? "" : diaryHrHTML(e);   // heart rate is taken after the last heat, so not on Heat (1)
   return `<div class="hrrow">
     <div><span class="d mono">${esc(fmtDay(e.date))}</span>${showHorse ? ` · <b>${esc(hName(e.horseId, e.horseName))}</b>` : ""} <span class="pill ${["heats","heat1","heat2"].includes(e.type) ? "p-possible" : e.type==="fast" ? "p-lame" : "p-sound"}">${esc(DTYPE[e.type]||e.type)}</span></div>
     ${det ? `<div class="mono small" style="white-space:pre-line">${esc(det)}</div>` : ""}
     ${hrBlock}
     ${e.notes ? `<div class="small muted">${esc(e.notes)}</div>` : ""}
+    ${billHTML("diary", e)}
     ${delKey ? delBtn("diary", e.id, delKey) : ""}
   </div>`;
 }
@@ -980,12 +985,35 @@ function bindDiaryHr(root){
   root.querySelectorAll("[data-hrin]").forEach(i => i.onkeydown = (ev) => { if (ev.key === "Enter"){ ev.preventDefault(); go(i.dataset.hrin); } });
 }
 function rerenderDiaryViews(){ renderDiaryRecent(); if (S.openHorse && !$("horseDetail").hidden) renderHorseDetail(); }
+/* bill notes: extra charges to put on the monthly invoice */
+function readBill(p){
+  const note = $(p + "Bill").value.trim(), av = $(p + "BillAmt").value.trim().replace("$", "").replace(",", ".");
+  if (!note && !av) return {};
+  const amount = av === "" ? null : Math.round(parseFloat(av) * 100) / 100;
+  if (av !== "" && (isNaN(amount) || amount < 0)){ msg("dMsg", "Enter the bill amount as a number, e.g. 45.00", false); return false; }
+  return { billNote: note || "Extra charge", billAmount: amount, billInvoiced: false };
+}
+const hasBill = (r) => !!(r.billNote || r.billAmount != null);
+function billHTML(col, r){
+  if (!hasBill(r)) return "";
+  return `<div class="billline"><span class="small"><b>Bill:</b> ${esc(r.billNote || "Extra charge")}${r.billAmount != null ? ` <b class="mono">${money(r.billAmount)}</b>` : ""}</span>
+    ${r.billInvoiced ? `<span class="pill p-sound">Invoiced</span>` : `<span class="pill p-possible">Not invoiced</span>`}
+    <button class="link small" type="button" data-binv="${esc(r.id)}" data-bcol="${esc(col)}" data-bval="${r.billInvoiced ? "0" : "1"}">${r.billInvoiced ? "Mark not invoiced" : "Mark invoiced"}</button></div>`;
+}
+function bindBills(root){
+  root.querySelectorAll("[data-binv]").forEach(b => b.onclick = async () => {
+    const on = b.dataset.bval === "1";
+    try{ await patch(b.dataset.bcol, b.dataset.binv, { billInvoiced: on, billInvoicedAt: on ? new Date().toISOString() : "" }); }
+    catch(err){ alertBox("storeNote", saveErrMsg(err)); }
+  });
+}
 function startRow(s, showHorse, delKey){
   const det = [s.placing ? `placed ${s.placing}` : "", s.time ? `time ${s.time}` : ""].filter(Boolean).join(" · ");
   return `<div class="hrrow">
     <div><span class="d mono">${esc(fmtDay(s.date))}</span>${showHorse ? ` · <b>${esc(hName(s.horseId, s.horseName))}</b>` : ""} <span class="pill p-example">${s.kind === "race" ? "Race" : "Trial"}</span></div>
     <div><b>${esc(s.venue)}</b>${det ? ` <span class="mono small">· ${esc(det)}</span>` : ""}</div>
     ${s.notes ? `<div class="small muted">${esc(s.notes)}</div>` : ""}
+    ${billHTML("starts", s)}
     ${delKey ? delBtn("starts", s.id, delKey) : ""}
   </div>`;
 }
@@ -1003,7 +1031,7 @@ function renderDiaryRecent(){
       html += it.k === "d" ? diaryRow(it.e, true, "r") : startRow(it.e, true, "r");
     }
     box.innerHTML = html;
-    bindDeletes(box, "r", renderDiaryRecent); bindDiaryHr(box);
+    bindDeletes(box, "r", renderDiaryRecent); bindDiaryHr(box); bindBills(box);
   }
   renderDueBanner();
 }
@@ -1101,7 +1129,9 @@ function renderCareOverview(){
   const month = S.invMonth || todayStr().slice(0,7);
   const uninv = [...careRecords(null, "shoe"), ...careRecords(null, "worm")].filter(c => !c.invoiced && (month === "all" || (c.date||"").slice(0,7) === month))
     .sort((a, b) => (a.date||"").localeCompare(b.date||""));
-  const months = [...new Set([...careRecords(null, "shoe"), ...careRecords(null, "worm")].map(c => (c.date||"").slice(0,7)).filter(Boolean))].sort().reverse();
+  const bills = [...S.diary.filter(hasBill).map(r => ({ col: "diary", r, what: DTYPE[r.type] || r.type })), ...S.starts.filter(hasBill).map(r => ({ col: "starts", r, what: `${r.kind === "race" ? "Race" : "Trial"} at ${r.venue}` }))];
+  const ubills = bills.filter(b => !b.r.billInvoiced && (month === "all" || (b.r.date||"").slice(0,7) === month)).sort((a, b) => (a.r.date||"").localeCompare(b.r.date||""));
+  const months = [...new Set([...careRecords(null, "shoe"), ...careRecords(null, "worm"), ...bills.map(b => b.r)].map(c => (c.date||"").slice(0,7)).filter(Boolean))].sort().reverse();
   if (!months.includes(month) && month !== "all") months.unshift(month);
   box.innerHTML = `<div class="card">
     <h3>Shoeing &amp; worming due</h3>
@@ -1109,11 +1139,13 @@ function renderCareOverview(){
       : `<p class="muted small" style="margin:0">Nothing due in the next week.</p>`}
     <div class="topline" style="margin-top:6px"><h3>Not yet invoiced</h3>
       <select id="invMonth" style="width:auto">${[["all","All months"], ...months.map(m => [m, new Date(m + "-15").toLocaleDateString("en-NZ",{month:"long", year:"numeric"})])].map(([v, l]) => `<option value="${v}"${v === month ? " selected" : ""}>${esc(l)}</option>`).join("")}</select></div>
-    ${uninv.length ? `<div class="history">${uninv.map(c => careRow({...c, detail: `${CARE[c.kind].name}${c.detail ? " · " + c.detail : ""}`}, true, "inv")).join("")}</div>` : `<p class="muted small" style="margin:0">Everything for this month is invoiced.</p>`}
+    ${uninv.length || ubills.length ? `<div class="history">${uninv.map(c => careRow({...c, detail: `${CARE[c.kind].name}${c.detail ? " · " + c.detail : ""}`}, true, "inv")).join("")}
+      ${ubills.map(b => `<div class="hrrow"><div><span class="d mono">${esc(fmtDay(b.r.date))}</span> · <b>${esc(hName(b.r.horseId, b.r.horseName))}</b> · ${esc(b.what)}</div>${billHTML(b.col, b.r)}</div>`).join("")}</div>
+      ${ubills.some(b => b.r.billAmount != null) ? `<p class="small" style="margin:0">Extra charges not yet invoiced: <b class="mono">${money(ubills.reduce((a, b) => a + (b.r.billAmount || 0), 0))}</b></p>` : ""}` : `<p class="muted small" style="margin:0">Everything for this month is invoiced.</p>`}
   </div>`;
   $("invMonth").onchange = () => { S.invMonth = $("invMonth").value; renderCareOverview(); };
   box.querySelectorAll("[data-openh]").forEach(b => b.onclick = () => { S.openHorse = b.dataset.openh; S.openCheck = null; renderHorses(); window.scrollTo(0,0); });
-  bindInvoice(box); bindDeletes(box, "inv");
+  bindInvoice(box); bindDeletes(box, "inv"); bindBills(box);
 }
 
 /* ================= supplements ================= */
@@ -1374,7 +1406,7 @@ function renderHorseDetail(){
     catch(err){ msg("eMsg", saveErrMsg(err), false); }
   };
   if ($("diaryMore")) $("diaryMore").onclick = () => { S.showAllDiary = !S.showAllDiary; rerender(); };
-  ["w","s","t","h","cshoe","cworm"].forEach(k => bindDeletes(d, k, rerender)); bindDiaryHr(d);
+  ["w","s","t","h","cshoe","cworm"].forEach(k => bindDeletes(d, k, rerender)); bindDiaryHr(d); bindBills(d);
   bindInvoice(d);
   d.querySelectorAll("[data-check]").forEach(b => b.onclick = () => { S.openCheck = b.dataset.check; rerender(); window.scrollTo(0,0); });
   $("delHorse").onclick = () => confirmIn($("delHWrap"), `Delete ${hShort(h)} and all their records? You can restore them from Recently deleted in Settings for 30 days.`, async () => {

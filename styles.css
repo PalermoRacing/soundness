@@ -183,4 +183,6 @@ fieldset.workset{border:0;padding:0;margin:0;min-width:0;display:flex;flex-direc
 #dForm:not(.is-heats) .heatlbl{display:none}
 #dForm.is-heats fieldset.workset{border:1px solid var(--line);border-radius:10px;padding:10px 12px 12px}
 .heatlbl{font-weight:700;padding:0 6px;font-size:15px}
-.f400[hidden]{display:none}
+.f400[hidden],.fwork[hidden],.fmins[hidden]{display:none}
+.billline{display:flex;flex-wrap:wrap;align-items:center;gap:6px 10px;border-top:1px dashed var(--line);padding-top:8px}
+.billrow .billamt{flex:0 0 110px;min-width:0}

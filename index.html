@@ -74,8 +74,9 @@
         </div>
         <fieldset class="workset" id="dSet1">
           <legend class="heatlbl">Heat 1</legend>
-          <div class="field"><label for="dDistance">Distance / sets</label><input id="dDistance" type="text" placeholder="e.g. 8 km jog, or 3 × 1600 m"></div>
-          <div class="row">
+          <div class="field fmins" hidden><label for="dMins">Minutes</label><input id="dMins" type="number" inputmode="numeric" min="1" max="300" placeholder="e.g. 40"></div>
+          <div class="field fwork"><label for="dDistance">Distance / sets</label><input id="dDistance" type="text" placeholder="e.g. 3 × 1600 m"></div>
+          <div class="row fwork">
             <div class="field"><label for="dFull">Full time</label><input id="dFull" type="text" inputmode="decimal" autocomplete="off" placeholder="e.g. 2:02.4"></div>
             <div class="field"><label for="d800">800 m</label><input id="d800" type="text" inputmode="decimal" autocomplete="off" placeholder="e.g. 58.2"></div>
             <div class="field f400"><label for="d400">400 m</label><input id="d400" type="text" inputmode="decimal" autocomplete="off" placeholder="e.g. 28.6"></div>
@@ -91,6 +92,10 @@
           </div>
         </fieldset>
         <div class="field"><label for="dNotes">Notes (optional)</label><textarea id="dNotes" placeholder="How the horse went, gear, anything to remember"></textarea></div>
+        <div class="row billrow">
+          <div class="field"><label for="dBill">Bill note – extra charge to invoice (optional)</label><input id="dBill" type="text" autocomplete="off" placeholder="e.g. Float to trials, vet call-out"></div>
+          <div class="field billamt"><label for="dBillAmt">Amount ($)</label><input id="dBillAmt" type="text" inputmode="decimal" autocomplete="off" placeholder="0.00"></div>
+        </div>
         <button class="btn primary big" type="submit">Save to diary</button>
       </form>
       <form id="sForm" hidden style="display:flex;flex-direction:column;gap:12px">
@@ -104,6 +109,10 @@
           <div class="field"><label for="sTime">Time (optional)</label><input id="sTime" type="text" inputmode="decimal" autocomplete="off" placeholder="e.g. 2:38.1"></div>
         </div>
         <div class="field"><label for="sNotes">Notes (optional)</label><textarea id="sNotes" placeholder="Draw, how it went, gear"></textarea></div>
+        <div class="row billrow">
+          <div class="field"><label for="sBill">Bill note – extra charge to invoice (optional)</label><input id="sBill" type="text" autocomplete="off" placeholder="e.g. Float to trials, vet call-out"></div>
+          <div class="field billamt"><label for="sBillAmt">Amount ($)</label><input id="sBillAmt" type="text" inputmode="decimal" autocomplete="off" placeholder="0.00"></div>
+        </div>
         <button class="btn primary big" type="submit">Save race / trial</button>
       </form>
       <div id="dMsg" class="small" hidden></div>
