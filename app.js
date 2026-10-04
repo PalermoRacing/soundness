@@ -1146,7 +1146,7 @@ function careCard(kind, h){
   return `<div class="card"><div class="topline"><h3>${CARE[kind].name} ${pill}</h3><button class="link" type="button" id="cAdd_${kind}">+ Record ${CARE[kind].name.toLowerCase()}</button></div>
     ${careForm(kind, h)}
     ${st ? `<div class="kv"><dt>Last ${CARE[kind].verb}</dt><dd>${esc(fmtDay(st.last.date))}</dd><dt>Next due</dt><dd>${esc(fmtDay(st.due))}</dd></div>
-      <details ${recs.length <= 3 ? "open" : ""}><summary class="small">History (${recs.length})</summary><div class="history" style="margin-top:8px">${recs.map(c => careRow(c, false, "c" + kind)).join("")}</div></details>`
+      <details data-fold="hist_${kind}" ${foldOpen("hist_" + kind) ? "open" : ""}><summary class="small">History (${recs.length})</summary><div class="history" style="margin-top:8px">${recs.map(c => careRow(c, false, "c" + kind)).join("")}</div></details>`
       : `<p class="muted small" style="margin:0">Nothing recorded yet.</p>`}
   </div>`;
 }
@@ -1254,9 +1254,21 @@ async function addSupp(e){
   const list = [...new Set([...(S.supps||[]), ...names])];
   try{ await saveSupps(list, S.suppDetails || {}); $("suppNew").value = ""; msg("suppMsg", `Added ${names.length}. Now enter the cost for each.`, true); }catch(err){ msg("suppMsg", saveErrMsg(err), false); }
 }
+/* collapsible sections on the horse page; remembers what you opened or closed on this device */
+const FOLD_DEFAULT = { ai: true, supp: false, diary: false, hr: false, hist_shoe: false, hist_worm: false };
+function foldOpen(key){ try{ const v = localStorage.getItem("fold_" + key); if (v !== null) return v === "1"; }catch(_){} return !!FOLD_DEFAULT[key]; }
+function fold(key, title, sub, body, extraClass = ""){
+  return `<details class="fold ${extraClass}" data-fold="${key}" ${foldOpen(key) ? "open" : ""}>
+    <summary><span class="ft"><b class="fh">${title}</b>${sub ? `<span class="small muted fs">${sub}</span>` : ""}</span><span class="chev" aria-hidden="true"></span></summary>
+    <div class="fb">${body}</div></details>`;
+}
+function bindFolds(root){
+  root.querySelectorAll("details[data-fold]").forEach(d => d.addEventListener("toggle", () => { try{ localStorage.setItem("fold_" + d.dataset.fold, d.open ? "1" : "0"); }catch(_){} }));
+}
 function suppCard(h){
   const list = supList(), on = new Set(h.supplements || []), qty = h.suppQty || {}, cost = horseSuppCost(h);
-  return `<div class="card"><div class="topline"><h3>Supplements</h3><button class="link" type="button" id="goSupp">Edit the list &amp; costs</button></div>
+  const sub = cost.on.length ? `On ${cost.on.length}${cost.total ? ` · ${money(cost.total)} a day` : ""}` : "None";
+  return `<div class="card">${fold("supp", "Supplements", esc(sub), `<div class="topline" style="justify-content:flex-end"><button class="link" type="button" id="goSupp">Edit the list &amp; costs</button></div>
     ${list.length ? `<div class="supplist">${list.map(n => { const d = suppInfo(n), q = qty[n], has = on.has(n);
         return `<div class="supprow${has ? " on" : ""}">
           <label class="supp"><input type="checkbox" data-supp="${esc(n)}" ${has ? "checked" : ""}> ${esc(n)}</label>
@@ -1265,7 +1277,7 @@ function suppCard(h){
         </div>`; }).join("")}</div>
       ${cost.on.length ? `<div class="kv"><dt>Per day</dt><dd class="mono"><b>${money(cost.total)}</b></dd><dt>Per week</dt><dd class="mono">${money(cost.total*7)}</dd><dt>Per month</dt><dd class="mono">${money(cost.total*30)}</dd></div>
         ${cost.missing ? `<p class="small muted" style="margin:0">${cost.missing} supplement${cost.missing>1?"s":""} still need an amount or a price.</p>` : ""}` : `<p class="small muted" style="margin:0">Not on any supplements.</p>`}`
-      : `<p class="muted small" style="margin:0">Add your supplements and their costs in Settings first, then tick the ones ${esc(hShort(h))} is on.</p>`}
+      : `<p class="muted small" style="margin:0">Add your supplements and their costs in Settings first, then tick the ones ${esc(hShort(h))} is on.</p>`}`)}
   </div>`;
 }
 
@@ -1389,18 +1401,19 @@ function renderHorseDetail(){
       </form>
     </div>
 
-    <div class="card"><div class="topline"><h3>Training summary</h3><button class="btn" type="button" id="aiBtn">Analyse ${esc(hShort(h))}</button></div>
-      <div id="aiOut">${h.aiSummary ? aiSummaryHTML(h.aiSummary) : `<p class="muted small" style="margin:0">Tap Analyse for an AI summary of recent work, times, heart rate, temperature and gait checks.</p>`}</div>
+    <div class="card">${fold("ai", "Training summary", h.aiSummary ? esc(fmtDay(dayOf(h.aiSummary.at))) : "", `<div class="topline" style="justify-content:flex-end"><button class="btn" type="button" id="aiBtn">Analyse ${esc(hShort(h))}</button></div>
+      <div id="aiOut">${h.aiSummary ? aiSummaryHTML(h.aiSummary) : `<p class="muted small" style="margin:0">Tap Analyse for an AI summary of recent work, times, heart rate, temperature and gait checks.</p>`}</div>`)}
     </div>
 
     ${careCard("shoe", h)}
     ${careCard("worm", h)}
     ${suppCard(h)}
 
-    <div class="card"><div class="topline"><h3>Work diary</h3><button class="link" type="button" id="diaryThis2">+ Add work</button></div>
+    <div class="card">${fold("diary", "Work diary", hd.length ? esc(`${hd.length} ${hd.length === 1 ? "entry" : "entries"} · last ${DTYPE[hd[0].type] || hd[0].type}, ${fmtDay(hd[0].date)}`) : "No work yet",
+      `<div class="topline" style="justify-content:flex-end"><button class="link" type="button" id="diaryThis2">+ Add work</button></div>
       ${hd.length ? `<div class="history">${shown.map(e=>diaryRow(e,false,"w")).join("")}</div>
         ${hd.length>15?`<button class="link" type="button" id="diaryMore">${S.showAllDiary?"Show fewer":`Show all ${hd.length} entries`}</button>`:""}`
-        : `<p class="muted small" style="margin:0">No work recorded yet.</p>`}
+        : `<p class="muted small" style="margin:0">No work recorded yet.</p>`}`)}
     </div>
 
     <div class="card"><div class="topline"><h3>Vet &amp; other charges</h3><button class="link" type="button" id="chargeThis2">+ Add charge</button></div>
@@ -1418,9 +1431,9 @@ function renderHorseDetail(){
       ${ht.length ? `<div class="history">${ht.slice(0, 8).map(t => tempRow(t, false, "t")).join("")}</div>` : `<p class="muted small" style="margin:0">No temperatures logged yet.</p>`}
     </div>
 
-    <div class="card"><h3>Heart rate recovery</h3>
-      ${hr10.length + hr20.length >= 2 ? timeChart([hr10, hr20], { unit: " bpm", names: ["10 min", "20 min"] }) : ""}
-      ${hh.length ? `<div class="history">${hh.slice(0, 8).map(r => hrRow(r, false, "h")).join("")}</div>` : `<p class="muted small" style="margin:0">No heart rates logged yet.</p>`}
+    <div class="card">${fold("hr", "Heart rate recovery", hh.length ? esc(`Last ${fmtDay(dayOf(hh[0].at))}: ${hh[0].bpm10 ?? "–"} at 10 min, ${hh[0].bpm20 ?? "–"} at 20 min`) + (hrFlag(hh[0]).level === "slow" ? ` <span class="pill p-possible">Slow recovery</span>` : "") : "No readings yet",
+      `${hr10.length + hr20.length >= 2 ? timeChart([hr10, hr20], { unit: " bpm", names: ["10 min", "20 min"] }) : ""}
+      ${hh.length ? `<div class="history">${hh.slice(0, 8).map(r => hrRow(r, false, "h")).join("")}</div>` : `<p class="muted small" style="margin:0">No heart rates logged yet.</p>`}`)}
     </div>
 
     <h3>Gait check history</h3>
@@ -1444,8 +1457,21 @@ function renderHorseDetail(){
     try{ await patch("horses", h.id, { suppQty: { ...(h.suppQty || {}), [inp.dataset.sqty]: q } }); }catch(err){ alertBox("storeNote", saveErrMsg(err)); }
   });
   d.querySelectorAll("[data-supp]").forEach(cb => cb.onchange = async () => {
-    const set = new Set(h.supplements || []); cb.checked ? set.add(cb.dataset.supp) : set.delete(cb.dataset.supp);
-    try{ await patch("horses", h.id, { supplements: [...set] }); }catch(err){ alertBox("storeNote", saveErrMsg(err)); }
+    const name = cb.dataset.supp, row = cb.closest(".supprow");
+    const commit = async (on) => {
+      const set = new Set(h.supplements || []); on ? set.add(name) : set.delete(name);
+      try{ await patch("horses", h.id, { supplements: [...set] }); }catch(err){ alertBox("storeNote", saveErrMsg(err)); }
+    };
+    if (cb.checked) return commit(true);
+    // taking a horse off a supplement: ask first
+    cb.checked = true;
+    if (!row || row.querySelector(".suppconfirm")) return;
+    const box = document.createElement("div"); box.className = "confirm suppconfirm";
+    box.innerHTML = `<span>Take ${esc(hShort(h))} off ${esc(name)}?</span><button class="btn primary small" type="button">Yes, remove</button><button class="btn small" type="button">Cancel</button>`;
+    row.appendChild(box);
+    const [yes, no] = box.querySelectorAll("button");
+    yes.onclick = () => { box.remove(); commit(false); };
+    no.onclick = () => box.remove();
   });
   bindCareForm("shoe", h); bindCareForm("worm", h);
   $("editThis").onclick = () => { S.editHorse = !S.editHorse; $("editForm").hidden = !S.editHorse; if (S.editHorse) $("eName").focus(); };
@@ -1458,7 +1484,7 @@ function renderHorseDetail(){
     catch(err){ msg("eMsg", saveErrMsg(err), false); }
   };
   if ($("diaryMore")) $("diaryMore").onclick = () => { S.showAllDiary = !S.showAllDiary; rerender(); };
-  ["w","s","x","t","h","cshoe","cworm"].forEach(k => bindDeletes(d, k, rerender)); bindDiaryHr(d); bindBills(d);
+  ["w","s","x","t","h","cshoe","cworm"].forEach(k => bindDeletes(d, k, rerender)); bindDiaryHr(d); bindBills(d); bindFolds(d);
   bindInvoice(d);
   d.querySelectorAll("[data-check]").forEach(b => b.onclick = () => { S.openCheck = b.dataset.check; rerender(); window.scrollTo(0,0); });
   $("delHorse").onclick = () => confirmIn($("delHWrap"), `Delete ${hShort(h)} and all their records? You can restore them from Recently deleted in Settings for 30 days.`, async () => {
