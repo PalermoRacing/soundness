@@ -55,22 +55,12 @@
   /* ---------- pose on one frame ---------- */
   const S = 256, MEAN = [123.675,116.28,103.53], STD = [58.395,57.12,57.375];
   let cropC = null;
-  async function pose(sess, src, box, mask = true){
+  async function pose(sess, src, box){
     const cx = box.x + box.w/2, cy = box.y + box.h/2, side = Math.max(box.w, box.h) * 1.1;
     cropC = cropC || document.createElement("canvas"); cropC.width = S; cropC.height = S;
     const g = cropC.getContext("2d", { willReadFrequently: true });
     g.fillStyle = "#000"; g.fillRect(0,0,S,S);
     g.drawImage(src, cx - side/2, cy - side/2, side, side, 0, 0, S, S);
-    // black out everything outside the horse's box, so a handler walking or running
-    // beside the horse isn't in the picture the pose model sees
-    const sc = S / side, mp = 0.15;
-    const mx0 = (box.x - box.w*mp - (cx - side/2)) * sc, mx1 = (box.x + box.w*(1+mp) - (cx - side/2)) * sc;
-    const my0 = (box.y - box.h*mp - (cy - side/2)) * sc, my1 = (box.y + box.h*(1+mp) - (cy - side/2)) * sc;
-    g.fillStyle = "#000";
-    if (mask && mx0 > 0) g.fillRect(0, 0, mx0, S);
-    if (mask && mx1 < S) g.fillRect(mx1, 0, S - mx1, S);
-    if (mask && my0 > 0) g.fillRect(0, 0, S, my0);
-    if (mask && my1 < S) g.fillRect(0, my1, S, S - my1);
     const d = g.getImageData(0,0,S,S).data, f = new Float32Array(3*S*S);
     for (let i = 0; i < S*S; i++){
       f[i] = (d[i*4]-MEAN[0])/STD[0]; f[S*S+i] = (d[i*4+1]-MEAN[1])/STD[1]; f[2*S*S+i] = (d[i*4+2]-MEAN[2])/STD[2];
@@ -90,83 +80,37 @@
 
   const seekTo = (v, t) => new Promise(res => { let done = false; const fin = () => { if (!done){ done = true; res(); } };
     v.addEventListener("seeked", fin, { once: true }); setTimeout(fin, 3000); v.currentTime = Math.max(0, t); });
-  /* Step forward through the video by playing it a frame at a time, rather than jumping
-     (seeking) to every frame. Phone videos (especially iPhone .mov) are slow to seek because
-     each jump re-decodes from the last keyframe; playing forward decodes each frame once. */
-  const canStep = typeof HTMLVideoElement !== "undefined" && "requestVideoFrameCallback" in HTMLVideoElement.prototype;
-  function stepTo(v, t){
-    return new Promise(res => {
-      let done = false, handle = 0;
-      const fin = (ok) => { if (done) return; done = true; try { v.pause(); } catch(_){} if (handle) try { v.cancelVideoFrameCallback(handle); } catch(_){} res(ok); };
-      const tick = (_now, meta) => { if (meta.mediaTime >= t - 0.004) fin(true); else handle = v.requestVideoFrameCallback(tick); };
-      handle = v.requestVideoFrameCallback(tick);
-      setTimeout(() => fin(false), 2500);
-      v.play().catch(() => fin(false));
-    });
-  }
 
   /* ---------- track through the clip ---------- */
-  async function track({ video, start, end, box, fps = 25, onStatus, onFrame, signal, poseFn }){
+  async function track({ video, start, end, box, fps = 25, onStatus, onFrame, signal }){
     const sess = await getSession(onStatus);
-    const P = poseFn || ((src, bx, mask) => pose(sess, src, bx, mask));
     try { await video.play(); video.pause(); } catch(_){}
     const n = Math.max(1, Math.floor((end - start) * fps));
-    const frames = []; let b = { ...box }, lost = 0, prev = null, stepping = canStep && !poseFn; const t0 = performance.now();
-    const rate0 = video.playbackRate; video.playbackRate = 1;
-    const grow = (bx, m) => ({ x: bx.x - bx.w*m, y: bx.y - bx.h*m, w: bx.w*(1+2*m), h: bx.h*(1+2*m) });
-    const keepIn = (kp, bx, m) => { const x0 = bx.x - bx.w*m, x1 = bx.x + bx.w*(1+m), y0 = bx.y - bx.h*m, y1 = bx.y + bx.h*(1+m);
-      kp.forEach(p => { if (p.x < x0 || p.x > x1 || p.y < y0 || p.y > y1) p.s = 0; }); return kp; };
-    const score = (kp) => ({ good: kp.filter(p => p.s > 0.3).length, conf: kp.reduce((a, p) => a + p.s, 0) / 17 });
+    const frames = []; let b = { ...box }, lost = 0; const t0 = performance.now();
     for (let i = 0; i < n; i++){
-      if (signal?.aborted){ video.playbackRate = rate0; throw { name: "AbortError" }; }
+      if (signal?.aborted) throw { name: "AbortError" };
       const t = start + i / fps;
-      if (i === 0 || !stepping) await seekTo(video, t);
-      else if (video.currentTime < t - 0.004 && !(await stepTo(video, t))){ stepping = false; await seekTo(video, t); }
-      // Look only inside the horse's box (everything else is blacked out, so the handler,
-      // posts and rails aren't seen). If the horse has slipped out of the box, look in a
-      // slightly bigger box — never the whole picture.
-      let kp = keepIn(await P(video, b, true), b, 0.15), sc = score(kp);
-      if (sc.good < 8 || sc.conf < 0.35){
-        const big = grow(b, 0.35), kp2 = keepIn(await P(video, big, true), big, 0.05), sc2 = score(kp2);
-        if (sc2.conf > sc.conf + 0.05){ kp = kp2; sc = sc2; }
-      }
-      // A body point can't jump across the picture in 1/25 of a second: drop any point that
-      // leaps further than ~35% of the horse's height from where it was (that's a post or the track).
-      if (prev){
-        const lim = 0.35 * b.h;
-        kp.forEach((p, k) => { const q = prev[k]; if (p.s > 0.3 && q && q.s > 0.3 && Math.hypot(p.x - q.x, p.y - q.y) > lim) p.s = 0; });
-      }
-      // Drop stragglers far from the rest of the horse.
-      { const g = kp.filter(p => p.s > 0.3);
-        if (g.length >= 5){
-          const mx = g.map(p => p.x).sort((a, c) => a - c)[g.length >> 1], my = g.map(p => p.y).sort((a, c) => a - c)[g.length >> 1];
-          const r = 0.75 * Math.max(b.w, b.h);
-          kp.forEach(p => { if (p.s > 0.3 && Math.hypot(p.x - mx, p.y - my) > r) p.s = 0; });
-        } }
-      sc = score(kp);
-      const conf = sc.conf;
-      frames.push({ t, kp, box: { ...b }, conf, vh: video.videoHeight || 0 });
-      // remember each point's last good position (for the jump check), forgetting it after a few frames
-      prev = kp.map((p, k) => p.s > 0.3 ? { ...p, age: 0 } : (prev && prev[k] && prev[k].age < 4 ? { ...prev[k], age: prev[k].age + 1 } : null));
+      await seekTo(video, t);
+      const kp = await pose(sess, video, b);
+      const conf = kp.reduce((a, p) => a + p.s, 0) / 17;
+      frames.push({ t, kp, box: { ...b }, conf });
       const good = kp.filter(p => p.s > 0.3);
-      if (good.length >= 8 && conf > 0.35){
+      if (good.length >= 6 && conf > 0.25){
         lost = 0;
         let x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity;
         for (const p of good){ x0 = Math.min(x0, p.x); x1 = Math.max(x1, p.x); y0 = Math.min(y0, p.y); y1 = Math.max(y1, p.y); }
         const w = x1 - x0, h = y1 - y0, pad = 0.18;
         const nb = { x: x0 - w*pad, y: y0 - h*pad, w: w*(1+2*pad), h: h*(1+2*pad) };
-        // limit how fast the box can change so one bad frame can't drag it off the horse
+        // limit how fast the box can change so one bad frame can't lose the horse
         const lim = (a, bb, r) => Math.max(a*(1-r), Math.min(a*(1+r), bb));
         nb.w = lim(b.w, nb.w, 0.12); nb.h = lim(b.h, nb.h, 0.12);
-        let ncx = nb.x + nb.w/2, ncy = nb.y + nb.h/2; const ocx = b.x + b.w/2, ocy = b.y + b.h/2;
-        ncx = Math.max(ocx - b.w*0.15, Math.min(ocx + b.w*0.15, ncx)); ncy = Math.max(ocy - b.h*0.15, Math.min(ocy + b.h*0.15, ncy));
+        const ncx = nb.x + nb.w/2, ncy = nb.y + nb.h/2, ocx = b.x + b.w/2, ocy = b.y + b.h/2;
         const k = 0.6, cx = ocx + (ncx - ocx)*k, cy = ocy + (ncy - ocy)*k, w2 = b.w + (nb.w - b.w)*k, h2 = b.h + (nb.h - b.h)*k;
         b = { x: cx - w2/2, y: cy - h2/2, w: w2, h: h2 };
-      } else if (++lost > 12) break;   // horse not clearly seen: keep the box where it was rather than chase it
+      } else if (++lost > 10) break;
       const per = (performance.now() - t0) / (i + 1);
       onFrame?.({ i: i + 1, n, kp, box: b, t, eta: Math.round(per * (n - i - 1) / 1000), ep: sess._ep });
     }
-    video.playbackRate = rate0;
     return frames;
   }
 
@@ -223,45 +167,31 @@
       return slope < -0.04 ? "away" : slope > 0.04 ? "towards" : "turn";
     });
     const faceVis = frames.map((_, i) => [K.L_eye, K.R_eye, K.nose].some(k => frames[i].kp[k].s > 0.45));
-    // Only measure while the horse is big enough in the picture: once it's far away (less than
-    // about an eighth of the picture height) a few pixels of tracking wobble swamp the real movement.
-    const bigEnough = frames.map(f => !f.vh || f.box.h >= f.vh * 0.12);
 
     const parts = {};
     // ---- pelvis (from behind: horse moving away) ----
-    // Pelvis height = tail-head point, backed up by the two hip points when the tail isn't picked up
-    // (each hip is shifted onto the tail's level first, so switching between them doesn't add a jump).
-    const offOf = (k) => median(frames.map((_, i) => { const t = kpv(K.tail, i), p = kpv(k, i); return t && p ? p.y - t.y : NaN; }));
-    const offL = offOf(K.L_hip), offR = offOf(K.R_hip);
-    const pelvisY = i => {
-      const t = kpv(K.tail, i); if (t) return t.y;
-      const v = []; const l = kpv(K.L_hip, i), r = kpv(K.R_hip, i);
-      if (l && Number.isFinite(offL)) v.push(l.y - offL); if (r && Number.isFinite(offR)) v.push(r.y - offR);
-      return v.length ? mean(v) : NaN;
-    };
     parts.pelvis = measurePart({
-      frames, fps, use: i => dir[i] === "away" && bigEnough[i],
-      yOf: pelvisY,
+      frames, fps, use: i => dir[i] === "away",
+      yOf: i => { const t = kpv(K.tail, i); return t ? t.y : NaN; },
       scaleOf: i => hindScale[i], scaleMm: CROUP_MM,
       pawsOf: i => { const a = kpv(K.L_bp, i), b = kpv(K.R_bp, i); if (!a || !b) return null; const [l, r] = a.x < b.x ? [a, b] : [b, a]; return { left: l, right: r }; }, // away: image-left = horse's left
-      thr: THRESH.pelvis, noiseMax: 35
+      thr: THRESH.pelvis
     });
     // hip hike from behind: vertical travel of each hip point
-    parts.hips = hipHike(frames, fps, i => dir[i] === "away" && bigEnough[i], hindScale);
+    parts.hips = hipHike(frames, fps, i => dir[i] === "away", hindScale);
     // ---- head (from the front: horse coming towards) ----
     parts.head = measurePart({
-      frames, fps, use: i => dir[i] === "towards" && faceVis[i] && bigEnough[i],
+      frames, fps, use: i => dir[i] === "towards" && faceVis[i],
       yOf: i => { const e = [kpv(K.L_eye, i), kpv(K.R_eye, i), kpv(K.nose, i)].filter(Boolean); return e.length ? mean(e.map(p => p.y)) : NaN; },
       scaleOf: i => foreScale[i], scaleMm: HEAD_MM,
       pawsOf: i => { const a = kpv(K.L_fp, i), b = kpv(K.R_fp, i); if (!a || !b) return null; const [l, r] = a.x > b.x ? [a, b] : [b, a]; return { left: l, right: r }; }, // towards: image-right = horse's left
-      thr: THRESH.head, noiseMax: 50
+      thr: THRESH.head
     });
-    const counts = { away: dir.filter(d => d === "away").length / fps, towards: dir.filter(d => d === "towards").length / fps,
-      awayClose: dir.filter((d, i) => d === "away" && bigEnough[i]).length / fps, towardsClose: dir.filter((d, i) => d === "towards" && bigEnough[i]).length / fps };
+    const counts = { away: dir.filter(d => d === "away").length / fps, towards: dir.filter(d => d === "towards").length / fps };
     return { parts, counts, meanConf: mean(frames.map(f => f.conf)), fps, frames: n };
   }
 
-  function measurePart({ frames, fps, use, yOf, scaleOf, scaleMm, pawsOf, thr, noiseMax }){
+  function measurePart({ frames, fps, use, yOf, scaleOf, scaleMm, pawsOf, thr }){
     const n = frames.length;
     const scaleMed = median(frames.map((_, i) => use(i) ? scaleOf(i) : NaN));
     const raw = frames.map((_, i) => { if (!use(i)) return NaN; const y = yOf(i), s = medianNear(scaleOf, i, n); return Number.isFinite(y) && s > 0 ? -y / s * scaleMm : NaN; });
@@ -308,9 +238,8 @@
     const md = pairs.map(p => p.minDiff), xd = pairs.map(p => p.maxDiff).filter(Number.isFinite);
     const stat = a => { if (!a.length) return { mean: NaN, sd: NaN, agree: 0 }; const m = a.length >= 4 ? median(a) : mean(a), sd = Math.sqrt(mean(a.map(x => (x - m)**2))); return { mean: m, sd, agree: a.filter(x => Math.sign(x) === Math.sign(m)).length / a.length }; };
     const amp = median(steps.map(s => Number.isFinite(s.max) ? s.max - s.min : NaN));
-    const sdMin = stat(md).sd, noisy = pairs.length >= 3 && Number.isFinite(sdMin) && sdMin > (noiseMax || 40);
     return {
-      ok: pairs.length >= 3 && !noisy, reason: pairs.length < 3 ? "too few clear strides" : noisy ? "the movement couldn't be read steadily (the horse was too far away or too small in the picture, or the camera moved)" : "",
+      ok: pairs.length >= 3, reason: pairs.length >= 3 ? "" : "too few clear strides",
       seconds: +avail.toFixed(1), strides: pairs.length, stepMs: Math.round(per0 / fps * 1000), amplitude: amp,
       minDiff: stat(md), maxDiff: stat(xd), sideCheck: totalVotes ? agreeVotes / totalVotes : 0, thr,
       trace: sig.map(v => Number.isFinite(v) ? Math.round(v * 10) / 10 : null), steps: steps.map(s => ({ i: s.i, side: s.side }))
@@ -331,8 +260,7 @@
       for (let i = 0; i + w < d.length; i += w){ const seg = d.slice(i, i + w).filter(Number.isFinite); if (seg.length > w * 0.7) out.push(Math.max(...seg) - Math.min(...seg)); } return out; };
     const rl = range(L), rr = range(R), k = Math.min(rl.length, rr.length);
     if (k < 2) return { ok: false };
-    const diffs = rl.slice(0, k).map((v, i) => v - rr[i]), m = mean(diffs), sd = Math.sqrt(mean(diffs.map(x => (x - m) ** 2)));
-    if (sd > 35) return { ok: false, noisy: true };
+    const diffs = rl.slice(0, k).map((v, i) => v - rr[i]), m = mean(diffs);
     return { ok: true, diff: m, agree: diffs.filter(x => Math.sign(x) === Math.sign(m)).length / diffs.length, strides: k, thr: THRESH.hip };
   }
 
@@ -379,10 +307,9 @@
       obs.push({ when: "Hips", note: `Left hip travels ${f(Hp.diff)} mm more than the right on average.` });
     }
     const top = Object.values(limbs).reduce((m, l) => Math.max(m, rank[l.level]), 0);
-    const haveHead = Hd.ok, havePel = P.ok, haveHips = !P.ok && Hp.ok && Hp.strides >= 3;
+    const haveHead = Hd.ok, havePel = P.ok;
     let verdict = "unclear";
     if (haveHead || havePel) verdict = top >= 3 ? "lame" : top >= 1 ? "possible" : "sound";
-    else if (haveHips && top >= 1) verdict = "possible";   // hips only: can raise a flag, but can't clear the horse
     const flagged = Object.values(limbs).filter(l => l.level !== "none").sort((a, b) => rank[b.level] - rank[a.level]);
     const LN = { LF: "left fore", RF: "right fore", LH: "left hind", RH: "right hind" };
     let summary;
@@ -391,8 +318,7 @@
     else summary = `Asymmetry measured, pointing to the ${flagged.map(l => LN[l.limb]).join(" and ")}. ${flagged[0].reason}`;
     const missing = [];
     if (!haveHead) missing.push(`Front legs not measured: ${Hd.reason || "no footage"} (needs the horse jogging towards the camera, head free).`);
-    if (!havePel && haveHips) missing.push(`Hind legs: only the hip movement could be read, not the full pelvis, so treat this as a rough guide.`);
-    else if (!havePel) missing.push(`Hind legs not measured: ${P.reason || "no footage"} (needs the horse jogging away from the camera).`);
+    if (!havePel) missing.push(`Hind legs not measured: ${P.reason || "no footage"} (needs the horse jogging away from the camera).`);
     if (missing.length) summary += " " + missing.join(" ");
     const strides = (haveHead ? Hd.strides : 0) + (havePel ? P.strides : 0);
     const confidence = strides >= 16 && a.meanConf > 0.55 ? "medium" : "low";
@@ -402,17 +328,8 @@
     next.push("These are measurements from our free tracking model, not a validated system. Use them to spot changes over time for each horse.");
     const tips = [];
     if (a.meanConf < 0.5) tips.push("The tracking wasn't confident. Film closer, in good light, with a plain background.");
-    const secs = (x) => `${x.toFixed(1)} s`, C = a.counts;
-    if (!haveHead) tips.push(C.towards < 2
-      ? "Front legs are measured from the head nod, which needs the horse jogging straight back TOWARDS you for 6 to 8 strides (about 5 seconds). Film the jog away, the turn and the jog back in one clip."
-      : C.towardsClose < 2
-        ? `The jog back towards you was there (${secs(C.towards)}), but the horse was too far away for most of it. Start the jog back no more than 20 to 25 m from the camera.`
-        : `The jog back towards you was there (${secs(C.towards)}), but the head and front hooves weren't picked up clearly enough to count steps. Keep the phone still, the horse's head free and both front hooves in view.`);
-    if (!havePel) tips.push(C.away < 2
-      ? "Hind legs are measured from the pelvis, which needs the horse jogging straight away from you for 6 to 8 strides (about 5 seconds)."
-      : C.awayClose < 2
-        ? `The jog away was there (${secs(C.away)}), but the horse got too small in the picture too quickly. Jog only 20 to 25 m away before turning, so the horse stays at least an eighth of the picture height. Standing closer, or zooming in a little (2×), also helps.`
-        : `The jog away was there (${secs(C.away)}), but the tail, hips and hind hooves weren't picked up steadily enough to count steps. Keep the phone still and the whole back end in view, and keep the handler out to the side.`);
+    if (!haveHead) tips.push("Include the horse jogging straight back towards you for at least 6 to 8 strides.");
+    if (!havePel) tips.push("Include the horse jogging straight away from you for at least 6 to 8 strides.");
     if ((haveHead && Hd.sideCheck < 0.6) || (havePel && P.sideCheck < 0.6)) tips.push("Keep all four hooves in view the whole time, so left and right steps can be told apart.");
     return {
       verdict, grade: null, confidence, gait_seen: gait === "trotter" ? "trot" : "pace",
