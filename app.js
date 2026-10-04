@@ -1,4 +1,4 @@
-// Palermo Gait Check — app logic
+// Palermo Racing Diary — app logic
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-app.js";
 import { getAuth, GoogleAuthProvider, signInWithPopup, signInWithRedirect, getRedirectResult, onAuthStateChanged, signOut }
   from "https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js";
@@ -66,7 +66,7 @@ async function doSignIn(){
 function startData(){
   const denied = (err) => {
     if (err?.code === "permission-denied"){
-      alertBox("storeNote", `${S.me?.email} isn't on the team list yet. Ask whoever set up Gait Check to add this address to the Firestore rules (setup guide, step 7).`);
+      alertBox("storeNote", `${S.me?.email} isn't on the team list yet. Ask whoever set up the diary to add this address to the Firestore rules (setup guide, step 7).`);
     } else alertBox("storeNote", "Can't reach the database right now. Check your internet connection.");
   };
   S.unsubs.push(onSnapshot(collection(S.fs,"horses"), snap => {
@@ -187,7 +187,7 @@ function bindUI(){
       const j = await r.json();
       const want = $("setModel").value.trim() || DEFAULT_MODEL;
       const has = (j.models||[]).some(m => m.name === "models/"+want);
-      msg("settingsMsg", has ? `The key works and ${want} is available.` : `The key works, but ${want} isn't listed. Gait Check will pick the best available Flash model automatically.`, true);
+      msg("settingsMsg", has ? `The key works and ${want} is available.` : `The key works, but ${want} isn't listed. The app will pick the best available Flash model automatically.`, true);
     }catch(err){ msg("settingsMsg", String(err.message||err), false); }
   };
 }

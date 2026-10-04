@@ -92,41 +92,61 @@
     v.addEventListener("seeked", fin, { once: true }); setTimeout(fin, 3000); v.currentTime = Math.max(0, t); });
 
   /* ---------- track through the clip ---------- */
-  async function track({ video, start, end, box, fps = 25, onStatus, onFrame, signal }){
+  async function track({ video, start, end, box, fps = 25, onStatus, onFrame, signal, poseFn }){
     const sess = await getSession(onStatus);
+    const P = poseFn || ((src, bx, mask) => pose(sess, src, bx, mask));
     try { await video.play(); video.pause(); } catch(_){}
     const n = Math.max(1, Math.floor((end - start) * fps));
-    const frames = []; let b = { ...box }, lost = 0; const t0 = performance.now();
+    const frames = []; let b = { ...box }, lost = 0, prev = null; const t0 = performance.now();
+    const grow = (bx, m) => ({ x: bx.x - bx.w*m, y: bx.y - bx.h*m, w: bx.w*(1+2*m), h: bx.h*(1+2*m) });
+    const keepIn = (kp, bx, m) => { const x0 = bx.x - bx.w*m, x1 = bx.x + bx.w*(1+m), y0 = bx.y - bx.h*m, y1 = bx.y + bx.h*(1+m);
+      kp.forEach(p => { if (p.x < x0 || p.x > x1 || p.y < y0 || p.y > y1) p.s = 0; }); return kp; };
+    const score = (kp) => ({ good: kp.filter(p => p.s > 0.3).length, conf: kp.reduce((a, p) => a + p.s, 0) / 17 });
     for (let i = 0; i < n; i++){
       if (signal?.aborted) throw { name: "AbortError" };
       const t = start + i / fps;
       await seekTo(video, t);
-      // first look only inside the horse's box (so a handler beside the horse is hidden);
-      // if that loses the horse (it moved out of the box, or the box is too tight), look again at the whole area
-      const inBox = (kp, m) => { const x0 = b.x - b.w*m, x1 = b.x + b.w*(1+m), y0 = b.y - b.h*m, y1 = b.y + b.h*(1+m);
-        kp.forEach(p => { if (p.x < x0 || p.x > x1 || p.y < y0 || p.y > y1) p.s = 0; }); return kp; };
-      const score = (kp) => ({ good: kp.filter(p => p.s > 0.3).length, conf: kp.reduce((a, p) => a + p.s, 0) / 17 });
-      let kp = inBox(await pose(sess, video, b, true), 0.15), sc = score(kp);
-      if (sc.good < 6 || sc.conf < 0.25){   // only re-check frames where the horse was actually lost, so it stays quick
-        const kp2 = await pose(sess, video, b, false), sc2 = score(kp2);
+      // Look only inside the horse's box (everything else is blacked out, so the handler,
+      // posts and rails aren't seen). If the horse has slipped out of the box, look in a
+      // slightly bigger box — never the whole picture.
+      let kp = keepIn(await P(video, b, true), b, 0.15), sc = score(kp);
+      if (sc.good < 8 || sc.conf < 0.35){
+        const big = grow(b, 0.35), kp2 = keepIn(await P(video, big, true), big, 0.05), sc2 = score(kp2);
         if (sc2.conf > sc.conf + 0.05){ kp = kp2; sc = sc2; }
       }
+      // A body point can't jump across the picture in 1/25 of a second: drop any point that
+      // leaps further than ~35% of the horse's height from where it was (that's a post or the track).
+      if (prev){
+        const lim = 0.35 * b.h;
+        kp.forEach((p, k) => { const q = prev[k]; if (p.s > 0.3 && q && q.s > 0.3 && Math.hypot(p.x - q.x, p.y - q.y) > lim) p.s = 0; });
+      }
+      // Drop stragglers far from the rest of the horse.
+      { const g = kp.filter(p => p.s > 0.3);
+        if (g.length >= 5){
+          const mx = g.map(p => p.x).sort((a, c) => a - c)[g.length >> 1], my = g.map(p => p.y).sort((a, c) => a - c)[g.length >> 1];
+          const r = 0.75 * Math.max(b.w, b.h);
+          kp.forEach(p => { if (p.s > 0.3 && Math.hypot(p.x - mx, p.y - my) > r) p.s = 0; });
+        } }
+      sc = score(kp);
       const conf = sc.conf;
       frames.push({ t, kp, box: { ...b }, conf });
+      // remember each point's last good position (for the jump check), forgetting it after a few frames
+      prev = kp.map((p, k) => p.s > 0.3 ? { ...p, age: 0 } : (prev && prev[k] && prev[k].age < 4 ? { ...prev[k], age: prev[k].age + 1 } : null));
       const good = kp.filter(p => p.s > 0.3);
-      if (good.length >= 6 && conf > 0.25){
+      if (good.length >= 8 && conf > 0.35){
         lost = 0;
         let x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity;
         for (const p of good){ x0 = Math.min(x0, p.x); x1 = Math.max(x1, p.x); y0 = Math.min(y0, p.y); y1 = Math.max(y1, p.y); }
         const w = x1 - x0, h = y1 - y0, pad = 0.18;
         const nb = { x: x0 - w*pad, y: y0 - h*pad, w: w*(1+2*pad), h: h*(1+2*pad) };
-        // limit how fast the box can change so one bad frame can't lose the horse
+        // limit how fast the box can change so one bad frame can't drag it off the horse
         const lim = (a, bb, r) => Math.max(a*(1-r), Math.min(a*(1+r), bb));
         nb.w = lim(b.w, nb.w, 0.12); nb.h = lim(b.h, nb.h, 0.12);
-        const ncx = nb.x + nb.w/2, ncy = nb.y + nb.h/2, ocx = b.x + b.w/2, ocy = b.y + b.h/2;
+        let ncx = nb.x + nb.w/2, ncy = nb.y + nb.h/2; const ocx = b.x + b.w/2, ocy = b.y + b.h/2;
+        ncx = Math.max(ocx - b.w*0.15, Math.min(ocx + b.w*0.15, ncx)); ncy = Math.max(ocy - b.h*0.15, Math.min(ocy + b.h*0.15, ncy));
         const k = 0.6, cx = ocx + (ncx - ocx)*k, cy = ocy + (ncy - ocy)*k, w2 = b.w + (nb.w - b.w)*k, h2 = b.h + (nb.h - b.h)*k;
         b = { x: cx - w2/2, y: cy - h2/2, w: w2, h: h2 };
-      } else if (++lost > 10) break;
+      } else if (++lost > 12) break;   // horse not clearly seen: keep the box where it was rather than chase it
       const per = (performance.now() - t0) / (i + 1);
       onFrame?.({ i: i + 1, n, kp, box: b, t, eta: Math.round(per * (n - i - 1) / 1000), ep: sess._ep });
     }

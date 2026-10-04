@@ -3,11 +3,11 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-<title>Palermo Gait Check</title>
+<title>Palermo Racing Diary</title>
 <meta name="description" content="Palermo Racing stable tool: video lameness checks and heart-rate recovery for each horse.">
 <meta name="theme-color" content="#A8223A">
 <meta name="apple-mobile-web-app-capable" content="yes">
-<meta name="apple-mobile-web-app-title" content="Gait Check">
+<meta name="apple-mobile-web-app-title" content="Palermo Racing Diary">
 <link rel="apple-touch-icon" href="icon-192.png">
 <link rel="icon" href="icon-192.png">
 <link rel="manifest" href="manifest.json">
@@ -19,10 +19,10 @@
 <div class="wrap">
   <header class="top">
     <div class="topline">
-      <span class="eyebrow">Palermo Racing</span>
+      <span class="eyebrow"></span>
       <span class="who" id="who" hidden><span id="whoName"></span><button class="link" id="settingsBtn" type="button">Settings</button><button class="link" id="signOutBtn" type="button">Sign out</button></span>
     </div>
-    <h1>Gait Check</h1>
+    <h1>Palermo Racing Diary</h1>
     <p class="sub">The stable's training diary. Record work, shoeing, heart rate and temperature, and check a horse's gait from a phone video. Every horse's history is kept in one place.</p>
   </header>
 
@@ -38,7 +38,7 @@
 
   <div id="setupView" class="card" hidden>
     <h2>Almost there</h2>
-    <p style="margin:0">This copy of Gait Check hasn't been connected to Firebase yet. Open <code>config.js</code> and paste in your Firebase settings. The setup guide (step 2) shows where to find them.</p>
+    <p style="margin:0">This copy of the diary hasn't been connected to Firebase yet. Open <code>config.js</code> and paste in your Firebase settings. The setup guide (step 2) shows where to find them.</p>
   </div>
 
   <main id="appView" hidden>
@@ -289,7 +289,7 @@
       <p style="margin:0">Mark each horse's gait when you add it. Trotters move diagonal legs together and pacers move same-side legs together, so the head and hip clues read differently. For pacers, footage from behind and side-on usually reads more clearly than head-on.</p>
     </div>
     <button class="link" type="button" id="guideBack">← Back to Gait</button>
-    <p class="disclaimer">Gait Check gives a second opinion from video to help you decide what to watch and when to call the vet. It does not replace a veterinary lameness exam, flexion tests or imaging.</p>
+    <p class="disclaimer">The gait check gives a second opinion from video to help you decide what to watch and when to call the vet. It does not replace a veterinary lameness exam, flexion tests or imaging.</p>
   </section>
 
   <!-- SETTINGS -->

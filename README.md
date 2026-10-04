@@ -1,6 +1,6 @@
-# Palermo Gait Check: setup guide
+# Palermo Racing Diary: setup guide
 
-This guide puts Gait Check online for free. You need about an hour and a computer (setting up on a phone is fiddly). You'll set up four things, in this order:
+This guide puts Palermo Racing Diary online for free. You need about an hour and a computer (setting up on a phone is fiddly). You'll set up four things, in this order:
 
 | # | What | Where | Cost |
 |---|---|---|---|
@@ -29,9 +29,9 @@ Use a **personal Google account** (a Gmail address) for everything, not your wor
 2. Click **Create a project** (or **Add project**). Name it `palermo-gait-check`.
 3. When asked about **Google Analytics**, switch it **off**. Click **Create project**, then **Continue**.
 4. On the project home page, click the **web icon `</>`** ("Add an app", then "Web").
-5. Nickname: `Gait Check`. Leave "Firebase Hosting" **unticked**. Click **Register app**.
+5. Nickname: `Palermo Racing Diary`. Leave "Firebase Hosting" **unticked**. Click **Register app**.
 6. You'll see a code box containing `const firebaseConfig = { apiKey: "...", authDomain: "...", ... }`. Keep this page open, because you need those values in a minute.
-7. Open the file **`config.js`** from the Gait Check folder in Notepad (Windows) or TextEdit (Mac). Replace each `PASTE-HERE` with the matching value from Firebase. Keep the quote marks. Save the file.
+7. Open the file **`config.js`** from the diary folder in Notepad (Windows) or TextEdit (Mac). Replace each `PASTE-HERE` with the matching value from Firebase. Keep the quote marks. Save the file.
 
    It should end up looking like this, but with your own values:
    ```js
@@ -63,7 +63,7 @@ These Firebase values are safe to put on the public website. Your data is protec
 2. Location: choose **australia-southeast1 (Sydney)**. This is the closest to New Zealand, and it can't be changed later.
 3. Choose **Start in production mode**, then **Create**.
 4. When it's ready, open the **Rules** tab. Delete everything in the box.
-5. Open **`firestore.rules`** from the Gait Check folder in Notepad or TextEdit. Change the two example emails to the Gmail addresses of everyone who should use Gait Check, starting with your own. Use lower case, keep each one in quotes, and separate them with commas:
+5. Open **`firestore.rules`** from the diary folder in Notepad or TextEdit. Change the two example emails to the Gmail addresses of everyone who should use the diary, starting with your own. Use lower case, keep each one in quotes, and separate them with commas:
    ```
    'kylie.example@gmail.com',
    'partner.example@gmail.com',
@@ -101,7 +101,7 @@ Anyone whose email isn't on this list can't see or change anything, even if they
 1. On **github.com**, click the **+** at the top right, then **New repository**.
 2. Repository name: `soundness` (already created). Choose **Public** (free websites need a public repository). Click **Create repository**.
 3. On the next page, click the link **uploading an existing file**.
-4. Drag in **all the files** from the Gait Check folder (not the folder itself): `index.html`, `app.js`, `styles.css`, `config.js` (the one you edited), `manifest.json`, `icon-192.png`, `icon-512.png`, `firestore.rules` and `README.md`.
+4. Drag in **all the files** from the diary folder (not the folder itself): `index.html`, `app.js`, `styles.css`, `config.js` (the one you edited), `manifest.json`, `icon-192.png`, `icon-512.png`, `firestore.rules` and `README.md`.
 5. Click **Commit changes**.
 6. Go to the repository's **Settings** tab, then **Pages** (in the left menu).
 7. Under **Build and deployment**, set Source to **Deploy from a branch**, Branch to **main**, and folder to **/ (root)**. Click **Save**.
@@ -139,7 +139,7 @@ The code on GitHub is public, but it contains no secrets. The Gemini key is kept
 | "Almost there… hasn't been connected to Firebase" | `config.js` still has `PASTE-HERE` in it. Edit it on GitHub: click the file, then the pencil icon, paste the values, then **Commit changes**. |
 | "Google refused the request" | The key's website restriction doesn't match. Check that it's exactly `https://palermoracing.github.io/*`, and wait 5 minutes. |
 | "The free Gemini limit has been reached" | Wait a minute and try again. If it keeps happening, the daily limit is used up, so try tomorrow. |
-| Model not found | Google renames models sometimes. Gait Check picks the newest free Flash model automatically. You can also type a model name in Settings. |
+| Model not found | Google renames models sometimes. The diary picks the newest free Flash model automatically. You can also type a model name in Settings. |
 | The video won't play | On iPhone: **Settings → Camera → Formats → Most Compatible**. Or trim the clip in Photos first. |
 | Upload is very slow | Film at **1080p** rather than 4K, and trim the clip to the useful 10 to 20 seconds in your Photos app before choosing it. |
 

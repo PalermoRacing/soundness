@@ -1,6 +1,6 @@
 {
-  "name": "Palermo Gait Check",
-  "short_name": "Gait Check",
+  "name": "Palermo Racing Diary",
+  "short_name": "Palermo Racing Diary",
   "start_url": "./",
   "display": "standalone",
   "background_color": "#F2F3EF",
