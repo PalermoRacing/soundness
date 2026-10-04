@@ -416,8 +416,9 @@ function renderTrash(){
 
 /* ================= video ================= */
 function clipDuration(){ const d = $("video").duration; return isFinite(d) ? d : 0; }
-function segWindow(){
+function segWindow(cap = true){
   const dur = clipDuration(), lenSel = $("segLen").value;
+  if ((lenSel === "all" || !dur) && !cap) return {start:0, len:dur};
   if (lenSel === "all" || !dur){ const st = dur > 45 ? Math.min(S.segStart, dur - 45) : 0; return {start: st, len: Math.min(dur, 45)}; }
   const len = Math.min(+lenSel, dur);
   return {start:Math.min(S.segStart, Math.max(0, dur - len)), len};
@@ -633,18 +634,15 @@ async function listModels(key){
 /* Ask Gemini. If a model is busy (503/500) it retries once, then moves on to the next free Flash model. */
 async function generate(parts, signal, onStatus){
   const key = S.settings.geminiKey;
-  // Keep "thinking" short so answers come back quickly.
   const bodyFor = (m, plain) => {
     const gc = { responseMimeType:"application/json", temperature:0.2 };
-    if (!plain && /^gemini-3/.test(m)) gc.thinkingConfig = { thinkingLevel:"low" };
-    else if (!plain && /^gemini-2\.5-flash/.test(m)) gc.thinkingConfig = { thinkingBudget:1024 };
     return JSON.stringify({ contents:[{role:"user", parts}], generationConfig:gc });
   };
-  // Each try gives up after 2 minutes and moves on, so the app never hangs.
+  // Each try gives up after 5 minutes and moves on, so the app never hangs.
   const call = async (m, plain) => {
     const ctl = new AbortController(); const stop = () => ctl.abort();
     signal.addEventListener("abort", stop);
-    const timer = setTimeout(stop, 120000);
+    const timer = setTimeout(stop, 300000);
     try { return await fetch(`${GEMINI}/v1beta/models/${m}:generateContent?key=${encodeURIComponent(key)}`, {method:"POST", headers:{"Content-Type":"application/json"}, body: bodyFor(m, plain), signal: ctl.signal}); }
     catch(e){ if (signal.aborted) throw {name:"AbortError"}; return {ok:false, status:504, timedOut:true}; }
     finally { clearTimeout(timer); signal.removeEventListener("abort", stop); }
@@ -739,9 +737,6 @@ function buildPrompt(horse, mode, win, nFrames){
   const since = new Date(Date.now() - 3*864e5).toISOString();
   const hrs = S.hr.filter(r => r.horseId===horse.id && r.at >= since).slice(0,3).map(r =>
     `- ${dayOf(r.at)} ${WORK[r.work]||r.work}: ${r.bpm10 ?? "?"} bpm at 10 min, ${r.bpm20 ?? "?"} at 20 min. ${hasHr(r) ? hrFlag(r).text : ""}`).join("\n");
-  const wk7 = addDays(todayStr(), -7);
-  const work = S.diary.filter(e => e.horseId===horse.id && e.date >= wk7).slice(0,10).map(e =>
-    `- ${e.date} ${DTYPE[e.type]||e.type}${e.type !== "farrier" && diaryDetail(e) ? ": " + diaryDetail(e).replace(/\n/g, " / ") : ""}${e.type==="farrier" ? `; ${SHOEWORK[e.shoeWork]||""} ${e.shoeType||""}` : ""}${e.notes ? "; " + e.notes : ""}`).join("\n");
   const gaitNote = horse.gait === "trotter"
     ? "This horse is a TROTTER (diagonal gait: LF+RH land together, RF+LH land together)."
     : "This horse is a PACER (lateral gait: LF+LH land together, RF+RH land together). In the pace the classic head nod is harder to read because a fore and hind on the SAME side bear weight together; lean more on hip/pelvic movement, stride length, fetlock drop, and head/neck movement relative to each lateral pair. Also note if the horse breaks gait.";
@@ -750,12 +745,11 @@ function buildPrompt(horse, mode, win, nFrames){
     : `You are given the video, limited to the section from ${win.start.toFixed(1)}s to ${(win.start+win.len).toFixed(1)}s. Watch the movement through several strides. In "observations", set "when" to timestamps within the video like "0:12–0:14".`;
   return `You are an experienced equine veterinarian specialising in lameness in Standardbred harness racing horses. Assess this horse for lameness from phone footage.
 
-HORSE: race name ${horse.name}${horse.stableName ? ` (stable name ${horse.stableName})` : ""}. ${gaitNote}${horse.notes ? " Owner notes about the horse: " + horse.notes : ""}
+HORSE: ${horse.name}. ${gaitNote}${horse.notes ? " Owner notes about the horse: " + horse.notes : ""}
 CAMERA VIEW: ${FOOTAGE[footage]}. PACE: ${pace}.${dir ? " LUNGING ON THE " + dir.toUpperCase() + " REIN." : ""} SURFACE: ${surf}.
 FOOTAGE: ${media}
 ${notes ? "OWNER'S OBSERVATIONS TODAY: " + notes : "No owner observations given."}
 ${prev ? "PREVIOUS CHECKS ON THIS HORSE (for comparison; do not assume they are still true):\n" + prev : ""}
-${work ? "WORK DIARY, LAST 7 DAYS (context only):\n" + work : ""}
 ${hrs ? "HEART RATE AND TEMPERATURE IN THE LAST 3 DAYS (context only; mention it if a slow recovery or a raised temperature supports or adds to concern):\n" + hrs : ""}
 
 How to assess:
@@ -786,13 +780,13 @@ async function analyse(){
   const ticker = setInterval(showStatus, 1000);
   const setProg = (p) => { $("progBar").hidden = p === null; $("progFill").style.width = Math.round((p||0)*100) + "%"; };
   S.ctl = new AbortController(); const signal = S.ctl.signal;
-  const win = segWindow(); const mime = videoMime(S.file);
+  const win = segWindow(false); const mime = videoMime(S.file);
   let uploaded = null;
   try{
     setStatus("Taking snapshots for the record…");
     const snaps = await grabFrames(4, 480, false);
     const thumbs = snaps.map(s => thumb(s.c));
-    const vm = { startOffset: win.start.toFixed(2)+"s", endOffset: (win.start+win.len).toFixed(2)+"s", fps: win.len <= 6 ? 6 : win.len <= 10 ? 4 : 2 };
+    const vm = { startOffset: win.start.toFixed(2)+"s", endOffset: (win.start+win.len).toFixed(2)+"s", fps: win.len <= 10 ? 10 : 5 };
     let mode = "video", parts, nFrames = 0;
     if (S.file.size <= INLINE_MAX){
       setStatus("Preparing the video…");
@@ -818,7 +812,7 @@ async function analyse(){
     }
     if (signal.aborted) throw {name:"AbortError"};
     parts.push({ text: buildPrompt(horse, mode, win, nFrames) });
-    setStatus("The AI is watching the horse move\u2026 usually 20\u201360 seconds");
+    setStatus("The AI is watching the horse move\u2026 this usually takes 20\u201390 seconds.");
     const {json, model} = await generate(parts, signal, setStatus);
     const check = {
       horseId: horse.id, horseName: horse.name, horseGait: horse.gait,
