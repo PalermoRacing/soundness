@@ -80,17 +80,33 @@
 
   const seekTo = (v, t) => new Promise(res => { let done = false; const fin = () => { if (!done){ done = true; res(); } };
     v.addEventListener("seeked", fin, { once: true }); setTimeout(fin, 3000); v.currentTime = Math.max(0, t); });
+  /* Step forward through the video by playing it a frame at a time, rather than jumping
+     (seeking) to every frame. Phone videos (especially iPhone .mov) are slow to seek because
+     each jump re-decodes from the last keyframe; playing forward decodes each frame once. */
+  const canStep = typeof HTMLVideoElement !== "undefined" && "requestVideoFrameCallback" in HTMLVideoElement.prototype;
+  function stepTo(v, t){
+    return new Promise(res => {
+      let done = false, handle = 0;
+      const fin = (ok) => { if (done) return; done = true; try { v.pause(); } catch(_){} if (handle) try { v.cancelVideoFrameCallback(handle); } catch(_){} res(ok); };
+      const tick = (_now, meta) => { if (meta.mediaTime >= t - 0.004) fin(true); else handle = v.requestVideoFrameCallback(tick); };
+      handle = v.requestVideoFrameCallback(tick);
+      setTimeout(() => fin(false), 2500);
+      v.play().catch(() => fin(false));
+    });
+  }
 
   /* ---------- track through the clip ---------- */
   async function track({ video, start, end, box, fps = 25, onStatus, onFrame, signal }){
     const sess = await getSession(onStatus);
     try { await video.play(); video.pause(); } catch(_){}
     const n = Math.max(1, Math.floor((end - start) * fps));
-    const frames = []; let b = { ...box }, lost = 0; const t0 = performance.now();
+    const frames = []; let b = { ...box }, lost = 0, stepping = canStep; const t0 = performance.now();
+    const rate0 = video.playbackRate; video.playbackRate = 1;
     for (let i = 0; i < n; i++){
-      if (signal?.aborted) throw { name: "AbortError" };
+      if (signal?.aborted){ video.playbackRate = rate0; throw { name: "AbortError" }; }
       const t = start + i / fps;
-      await seekTo(video, t);
+      if (i === 0 || !stepping) await seekTo(video, t);
+      else if (video.currentTime < t - 0.004 && !(await stepTo(video, t))){ stepping = false; await seekTo(video, t); }
       const kp = await pose(sess, video, b);
       const conf = kp.reduce((a, p) => a + p.s, 0) / 17;
       frames.push({ t, kp, box: { ...b }, conf });
@@ -111,6 +127,7 @@
       const per = (performance.now() - t0) / (i + 1);
       onFrame?.({ i: i + 1, n, kp, box: b, t, eta: Math.round(per * (n - i - 1) / 1000), ep: sess._ep });
     }
+    video.playbackRate = rate0;
     return frames;
   }
 
