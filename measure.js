@@ -90,6 +90,20 @@
 
   const seekTo = (v, t) => new Promise(res => { let done = false; const fin = () => { if (!done){ done = true; res(); } };
     v.addEventListener("seeked", fin, { once: true }); setTimeout(fin, 3000); v.currentTime = Math.max(0, t); });
+  /* Step forward through the video by playing it a frame at a time, rather than jumping
+     (seeking) to every frame. Phone videos (especially iPhone .mov) are slow to seek because
+     each jump re-decodes from the last keyframe; playing forward decodes each frame once. */
+  const canStep = typeof HTMLVideoElement !== "undefined" && "requestVideoFrameCallback" in HTMLVideoElement.prototype;
+  function stepTo(v, t){
+    return new Promise(res => {
+      let done = false, handle = 0;
+      const fin = (ok) => { if (done) return; done = true; try { v.pause(); } catch(_){} if (handle) try { v.cancelVideoFrameCallback(handle); } catch(_){} res(ok); };
+      const tick = (_now, meta) => { if (meta.mediaTime >= t - 0.004) fin(true); else handle = v.requestVideoFrameCallback(tick); };
+      handle = v.requestVideoFrameCallback(tick);
+      setTimeout(() => fin(false), 2500);
+      v.play().catch(() => fin(false));
+    });
+  }
 
   /* ---------- track through the clip ---------- */
   async function track({ video, start, end, box, fps = 25, onStatus, onFrame, signal, poseFn }){
@@ -97,15 +111,17 @@
     const P = poseFn || ((src, bx, mask) => pose(sess, src, bx, mask));
     try { await video.play(); video.pause(); } catch(_){}
     const n = Math.max(1, Math.floor((end - start) * fps));
-    const frames = []; let b = { ...box }, lost = 0, prev = null; const t0 = performance.now();
+    const frames = []; let b = { ...box }, lost = 0, prev = null, stepping = canStep && !poseFn; const t0 = performance.now();
+    const rate0 = video.playbackRate; video.playbackRate = 1;
     const grow = (bx, m) => ({ x: bx.x - bx.w*m, y: bx.y - bx.h*m, w: bx.w*(1+2*m), h: bx.h*(1+2*m) });
     const keepIn = (kp, bx, m) => { const x0 = bx.x - bx.w*m, x1 = bx.x + bx.w*(1+m), y0 = bx.y - bx.h*m, y1 = bx.y + bx.h*(1+m);
       kp.forEach(p => { if (p.x < x0 || p.x > x1 || p.y < y0 || p.y > y1) p.s = 0; }); return kp; };
     const score = (kp) => ({ good: kp.filter(p => p.s > 0.3).length, conf: kp.reduce((a, p) => a + p.s, 0) / 17 });
     for (let i = 0; i < n; i++){
-      if (signal?.aborted) throw { name: "AbortError" };
+      if (signal?.aborted){ video.playbackRate = rate0; throw { name: "AbortError" }; }
       const t = start + i / fps;
-      await seekTo(video, t);
+      if (i === 0 || !stepping) await seekTo(video, t);
+      else if (video.currentTime < t - 0.004 && !(await stepTo(video, t))){ stepping = false; await seekTo(video, t); }
       // Look only inside the horse's box (everything else is blacked out, so the handler,
       // posts and rails aren't seen). If the horse has slipped out of the box, look in a
       // slightly bigger box — never the whole picture.
@@ -150,6 +166,7 @@
       const per = (performance.now() - t0) / (i + 1);
       onFrame?.({ i: i + 1, n, kp, box: b, t, eta: Math.round(per * (n - i - 1) / 1000), ep: sess._ep });
     }
+    video.playbackRate = rate0;
     return frames;
   }
 
@@ -209,9 +226,19 @@
 
     const parts = {};
     // ---- pelvis (from behind: horse moving away) ----
+    // Pelvis height = tail-head point, backed up by the two hip points when the tail isn't picked up
+    // (each hip is shifted onto the tail's level first, so switching between them doesn't add a jump).
+    const offOf = (k) => median(frames.map((_, i) => { const t = kpv(K.tail, i), p = kpv(k, i); return t && p ? p.y - t.y : NaN; }));
+    const offL = offOf(K.L_hip), offR = offOf(K.R_hip);
+    const pelvisY = i => {
+      const t = kpv(K.tail, i); if (t) return t.y;
+      const v = []; const l = kpv(K.L_hip, i), r = kpv(K.R_hip, i);
+      if (l && Number.isFinite(offL)) v.push(l.y - offL); if (r && Number.isFinite(offR)) v.push(r.y - offR);
+      return v.length ? mean(v) : NaN;
+    };
     parts.pelvis = measurePart({
       frames, fps, use: i => dir[i] === "away",
-      yOf: i => { const t = kpv(K.tail, i); return t ? t.y : NaN; },
+      yOf: pelvisY,
       scaleOf: i => hindScale[i], scaleMm: CROUP_MM,
       pawsOf: i => { const a = kpv(K.L_bp, i), b = kpv(K.R_bp, i); if (!a || !b) return null; const [l, r] = a.x < b.x ? [a, b] : [b, a]; return { left: l, right: r }; }, // away: image-left = horse's left
       thr: THRESH.pelvis
@@ -346,18 +373,20 @@
       obs.push({ when: "Hips", note: `Left hip travels ${f(Hp.diff)} mm more than the right on average.` });
     }
     const top = Object.values(limbs).reduce((m, l) => Math.max(m, rank[l.level]), 0);
-    const haveHead = Hd.ok, havePel = P.ok;
+    const haveHead = Hd.ok, havePel = P.ok, haveHips = !P.ok && Hp.ok && Hp.strides >= 3;
     let verdict = "unclear";
     if (haveHead || havePel) verdict = top >= 3 ? "lame" : top >= 1 ? "possible" : "sound";
+    else if (haveHips) verdict = top >= 1 ? "possible" : "sound";   // hips only: never stronger than "possible"
     const flagged = Object.values(limbs).filter(l => l.level !== "none").sort((a, b) => rank[b.level] - rank[a.level]);
     const LN = { LF: "left fore", RF: "right fore", LH: "left hind", RH: "right hind" };
     let summary;
     if (verdict === "unclear") summary = "Not enough clear strides could be measured. Check the filming tips and try again.";
-    else if (!flagged.length) summary = `Movement measured as even on the ${[haveHead && "front", havePel && "hind"].filter(Boolean).join(" and ")} end.`;
+    else if (!flagged.length) summary = `Movement measured as even on the ${[haveHead && "front", (havePel || haveHips) && "hind"].filter(Boolean).join(" and ")} end${haveHips ? " (from the hips only)" : ""}.`;
     else summary = `Asymmetry measured, pointing to the ${flagged.map(l => LN[l.limb]).join(" and ")}. ${flagged[0].reason}`;
     const missing = [];
     if (!haveHead) missing.push(`Front legs not measured: ${Hd.reason || "no footage"} (needs the horse jogging towards the camera, head free).`);
-    if (!havePel) missing.push(`Hind legs not measured: ${P.reason || "no footage"} (needs the horse jogging away from the camera).`);
+    if (!havePel && haveHips) missing.push(`Hind legs: only the hip movement could be read, not the full pelvis, so treat this as a rough guide.`);
+    else if (!havePel) missing.push(`Hind legs not measured: ${P.reason || "no footage"} (needs the horse jogging away from the camera).`);
     if (missing.length) summary += " " + missing.join(" ");
     const strides = (haveHead ? Hd.strides : 0) + (havePel ? P.strides : 0);
     const confidence = strides >= 16 && a.meanConf > 0.55 ? "medium" : "low";
@@ -367,8 +396,13 @@
     next.push("These are measurements from our free tracking model, not a validated system. Use them to spot changes over time for each horse.");
     const tips = [];
     if (a.meanConf < 0.5) tips.push("The tracking wasn't confident. Film closer, in good light, with a plain background.");
-    if (!haveHead) tips.push("Include the horse jogging straight back towards you for at least 6 to 8 strides.");
-    if (!havePel) tips.push("Include the horse jogging straight away from you for at least 6 to 8 strides.");
+    const secs = (x) => `${x.toFixed(1)} s`;
+    if (!haveHead) tips.push(a.counts.towards >= 2
+      ? `The jog back towards you was there (${secs(a.counts.towards)}), but the head and front hooves weren't picked up clearly enough to count steps. Keep the phone still, the horse's head free and both front hooves in view.`
+      : "Include the horse jogging straight back towards you for at least 6 to 8 strides.");
+    if (!havePel) tips.push(a.counts.away >= 2
+      ? `The jog away was there (${secs(a.counts.away)}), but the tail, hips and hind hooves weren't picked up clearly enough to count steps. Keep the phone still and the whole back end in view, and keep the handler out to the side.`
+      : "Include the horse jogging straight away from you for at least 6 to 8 strides.");
     if ((haveHead && Hd.sideCheck < 0.6) || (havePel && P.sideCheck < 0.6)) tips.push("Keep all four hooves in view the whole time, so left and right steps can be told apart.");
     return {
       verdict, grade: null, confidence, gait_seen: gait === "trotter" ? "trot" : "pace",
