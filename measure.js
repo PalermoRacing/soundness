@@ -145,7 +145,7 @@
         } }
       sc = score(kp);
       const conf = sc.conf;
-      frames.push({ t, kp, box: { ...b }, conf });
+      frames.push({ t, kp, box: { ...b }, conf, vh: video.videoHeight || 0 });
       // remember each point's last good position (for the jump check), forgetting it after a few frames
       prev = kp.map((p, k) => p.s > 0.3 ? { ...p, age: 0 } : (prev && prev[k] && prev[k].age < 4 ? { ...prev[k], age: prev[k].age + 1 } : null));
       const good = kp.filter(p => p.s > 0.3);
@@ -223,6 +223,9 @@
       return slope < -0.04 ? "away" : slope > 0.04 ? "towards" : "turn";
     });
     const faceVis = frames.map((_, i) => [K.L_eye, K.R_eye, K.nose].some(k => frames[i].kp[k].s > 0.45));
+    // Only measure while the horse is big enough in the picture: once it's far away (less than
+    // about an eighth of the picture height) a few pixels of tracking wobble swamp the real movement.
+    const bigEnough = frames.map(f => !f.vh || f.box.h >= f.vh * 0.12);
 
     const parts = {};
     // ---- pelvis (from behind: horse moving away) ----
@@ -237,27 +240,28 @@
       return v.length ? mean(v) : NaN;
     };
     parts.pelvis = measurePart({
-      frames, fps, use: i => dir[i] === "away",
+      frames, fps, use: i => dir[i] === "away" && bigEnough[i],
       yOf: pelvisY,
       scaleOf: i => hindScale[i], scaleMm: CROUP_MM,
       pawsOf: i => { const a = kpv(K.L_bp, i), b = kpv(K.R_bp, i); if (!a || !b) return null; const [l, r] = a.x < b.x ? [a, b] : [b, a]; return { left: l, right: r }; }, // away: image-left = horse's left
-      thr: THRESH.pelvis
+      thr: THRESH.pelvis, noiseMax: 35
     });
     // hip hike from behind: vertical travel of each hip point
-    parts.hips = hipHike(frames, fps, i => dir[i] === "away", hindScale);
+    parts.hips = hipHike(frames, fps, i => dir[i] === "away" && bigEnough[i], hindScale);
     // ---- head (from the front: horse coming towards) ----
     parts.head = measurePart({
-      frames, fps, use: i => dir[i] === "towards" && faceVis[i],
+      frames, fps, use: i => dir[i] === "towards" && faceVis[i] && bigEnough[i],
       yOf: i => { const e = [kpv(K.L_eye, i), kpv(K.R_eye, i), kpv(K.nose, i)].filter(Boolean); return e.length ? mean(e.map(p => p.y)) : NaN; },
       scaleOf: i => foreScale[i], scaleMm: HEAD_MM,
       pawsOf: i => { const a = kpv(K.L_fp, i), b = kpv(K.R_fp, i); if (!a || !b) return null; const [l, r] = a.x > b.x ? [a, b] : [b, a]; return { left: l, right: r }; }, // towards: image-right = horse's left
-      thr: THRESH.head
+      thr: THRESH.head, noiseMax: 50
     });
-    const counts = { away: dir.filter(d => d === "away").length / fps, towards: dir.filter(d => d === "towards").length / fps };
+    const counts = { away: dir.filter(d => d === "away").length / fps, towards: dir.filter(d => d === "towards").length / fps,
+      awayClose: dir.filter((d, i) => d === "away" && bigEnough[i]).length / fps, towardsClose: dir.filter((d, i) => d === "towards" && bigEnough[i]).length / fps };
     return { parts, counts, meanConf: mean(frames.map(f => f.conf)), fps, frames: n };
   }
 
-  function measurePart({ frames, fps, use, yOf, scaleOf, scaleMm, pawsOf, thr }){
+  function measurePart({ frames, fps, use, yOf, scaleOf, scaleMm, pawsOf, thr, noiseMax }){
     const n = frames.length;
     const scaleMed = median(frames.map((_, i) => use(i) ? scaleOf(i) : NaN));
     const raw = frames.map((_, i) => { if (!use(i)) return NaN; const y = yOf(i), s = medianNear(scaleOf, i, n); return Number.isFinite(y) && s > 0 ? -y / s * scaleMm : NaN; });
@@ -304,8 +308,9 @@
     const md = pairs.map(p => p.minDiff), xd = pairs.map(p => p.maxDiff).filter(Number.isFinite);
     const stat = a => { if (!a.length) return { mean: NaN, sd: NaN, agree: 0 }; const m = a.length >= 4 ? median(a) : mean(a), sd = Math.sqrt(mean(a.map(x => (x - m)**2))); return { mean: m, sd, agree: a.filter(x => Math.sign(x) === Math.sign(m)).length / a.length }; };
     const amp = median(steps.map(s => Number.isFinite(s.max) ? s.max - s.min : NaN));
+    const sdMin = stat(md).sd, noisy = pairs.length >= 3 && Number.isFinite(sdMin) && sdMin > (noiseMax || 40);
     return {
-      ok: pairs.length >= 3, reason: pairs.length >= 3 ? "" : "too few clear strides",
+      ok: pairs.length >= 3 && !noisy, reason: pairs.length < 3 ? "too few clear strides" : noisy ? "the movement couldn't be read steadily (the horse was too far away or too small in the picture, or the camera moved)" : "",
       seconds: +avail.toFixed(1), strides: pairs.length, stepMs: Math.round(per0 / fps * 1000), amplitude: amp,
       minDiff: stat(md), maxDiff: stat(xd), sideCheck: totalVotes ? agreeVotes / totalVotes : 0, thr,
       trace: sig.map(v => Number.isFinite(v) ? Math.round(v * 10) / 10 : null), steps: steps.map(s => ({ i: s.i, side: s.side }))
@@ -326,7 +331,8 @@
       for (let i = 0; i + w < d.length; i += w){ const seg = d.slice(i, i + w).filter(Number.isFinite); if (seg.length > w * 0.7) out.push(Math.max(...seg) - Math.min(...seg)); } return out; };
     const rl = range(L), rr = range(R), k = Math.min(rl.length, rr.length);
     if (k < 2) return { ok: false };
-    const diffs = rl.slice(0, k).map((v, i) => v - rr[i]), m = mean(diffs);
+    const diffs = rl.slice(0, k).map((v, i) => v - rr[i]), m = mean(diffs), sd = Math.sqrt(mean(diffs.map(x => (x - m) ** 2)));
+    if (sd > 35) return { ok: false, noisy: true };
     return { ok: true, diff: m, agree: diffs.filter(x => Math.sign(x) === Math.sign(m)).length / diffs.length, strides: k, thr: THRESH.hip };
   }
 
@@ -376,12 +382,12 @@
     const haveHead = Hd.ok, havePel = P.ok, haveHips = !P.ok && Hp.ok && Hp.strides >= 3;
     let verdict = "unclear";
     if (haveHead || havePel) verdict = top >= 3 ? "lame" : top >= 1 ? "possible" : "sound";
-    else if (haveHips) verdict = top >= 1 ? "possible" : "sound";   // hips only: never stronger than "possible"
+    else if (haveHips && top >= 1) verdict = "possible";   // hips only: can raise a flag, but can't clear the horse
     const flagged = Object.values(limbs).filter(l => l.level !== "none").sort((a, b) => rank[b.level] - rank[a.level]);
     const LN = { LF: "left fore", RF: "right fore", LH: "left hind", RH: "right hind" };
     let summary;
     if (verdict === "unclear") summary = "Not enough clear strides could be measured. Check the filming tips and try again.";
-    else if (!flagged.length) summary = `Movement measured as even on the ${[haveHead && "front", (havePel || haveHips) && "hind"].filter(Boolean).join(" and ")} end${haveHips ? " (from the hips only)" : ""}.`;
+    else if (!flagged.length) summary = `Movement measured as even on the ${[haveHead && "front", havePel && "hind"].filter(Boolean).join(" and ")} end.`;
     else summary = `Asymmetry measured, pointing to the ${flagged.map(l => LN[l.limb]).join(" and ")}. ${flagged[0].reason}`;
     const missing = [];
     if (!haveHead) missing.push(`Front legs not measured: ${Hd.reason || "no footage"} (needs the horse jogging towards the camera, head free).`);
@@ -396,13 +402,17 @@
     next.push("These are measurements from our free tracking model, not a validated system. Use them to spot changes over time for each horse.");
     const tips = [];
     if (a.meanConf < 0.5) tips.push("The tracking wasn't confident. Film closer, in good light, with a plain background.");
-    const secs = (x) => `${x.toFixed(1)} s`;
-    if (!haveHead) tips.push(a.counts.towards >= 2
-      ? `The jog back towards you was there (${secs(a.counts.towards)}), but the head and front hooves weren't picked up clearly enough to count steps. Keep the phone still, the horse's head free and both front hooves in view.`
-      : "Include the horse jogging straight back towards you for at least 6 to 8 strides.");
-    if (!havePel) tips.push(a.counts.away >= 2
-      ? `The jog away was there (${secs(a.counts.away)}), but the tail, hips and hind hooves weren't picked up clearly enough to count steps. Keep the phone still and the whole back end in view, and keep the handler out to the side.`
-      : "Include the horse jogging straight away from you for at least 6 to 8 strides.");
+    const secs = (x) => `${x.toFixed(1)} s`, C = a.counts;
+    if (!haveHead) tips.push(C.towards < 2
+      ? "Front legs are measured from the head nod, which needs the horse jogging straight back TOWARDS you for 6 to 8 strides (about 5 seconds). Film the jog away, the turn and the jog back in one clip."
+      : C.towardsClose < 2
+        ? `The jog back towards you was there (${secs(C.towards)}), but the horse was too far away for most of it. Start the jog back no more than 20 to 25 m from the camera.`
+        : `The jog back towards you was there (${secs(C.towards)}), but the head and front hooves weren't picked up clearly enough to count steps. Keep the phone still, the horse's head free and both front hooves in view.`);
+    if (!havePel) tips.push(C.away < 2
+      ? "Hind legs are measured from the pelvis, which needs the horse jogging straight away from you for 6 to 8 strides (about 5 seconds)."
+      : C.awayClose < 2
+        ? `The jog away was there (${secs(C.away)}), but the horse got too small in the picture too quickly. Jog only 20 to 25 m away before turning, so the horse stays at least an eighth of the picture height. Standing closer, or zooming in a little (2×), also helps.`
+        : `The jog away was there (${secs(C.away)}), but the tail, hips and hind hooves weren't picked up steadily enough to count steps. Keep the phone still and the whole back end in view, and keep the handler out to the side.`);
     if ((haveHead && Hd.sideCheck < 0.6) || (havePel && P.sideCheck < 0.6)) tips.push("Keep all four hooves in view the whole time, so left and right steps can be told apart.");
     return {
       verdict, grade: null, confidence, gait_seen: gait === "trotter" ? "trot" : "pace",
