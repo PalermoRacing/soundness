@@ -1152,7 +1152,7 @@ function careCard(kind, h){
 /* due alarms across all horses */
 function dueList(){
   const out = [];
-  for (const h of S.horses) for (const kind of CARE_KINDS){
+  for (const h of S.horses) for (const kind of ["shoe", "worm"]){
     const st = careStatus(h.id, kind); if (st && st.level !== "ok" && st.level !== "none") out.push({ h, kind, ...st });
   }
   return out.sort((a, b) => a.due.localeCompare(b.due));
@@ -1176,7 +1176,7 @@ function renderCareOverview(){
   const months = [...new Set([...["shoe", "worm"].flatMap(k => careRecords(null, k)), ...bills.map(b => b.r)].map(c => (c.date||"").slice(0,7)).filter(Boolean))].sort().reverse();
   if (!months.includes(month) && month !== "all") months.unshift(month);
   box.innerHTML = `<div class="card">
-    <h3>Shoeing, worming &amp; shockwave due</h3>
+    <h3>Shoeing &amp; worming due</h3>
     ${due.length ? `<div class="history">${due.map(d => `<div class="hrrow"><div><b><button class="link" type="button" data-openh="${esc(d.h.id)}">${esc(hShort(d.h))}</button></b> · ${CARE[d.kind].name} ${d.level === "overdue" ? `<span class="pill p-lame">Overdue</span>` : `<span class="pill p-possible">Due soon</span>`}</div><div class="small">Due ${esc(fmtDay(d.due))} · last ${CARE[d.kind].verb} ${esc(fmtDay(d.last.date))}</div></div>`).join("")}</div>`
       : `<p class="muted small" style="margin:0">Nothing due in the next week.</p>`}
     <div class="topline" style="margin-top:6px"><h3>Not yet invoiced</h3>
