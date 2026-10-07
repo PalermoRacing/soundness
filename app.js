@@ -1091,12 +1091,12 @@ function careStatus(horseId, kind){
 }
 function careRow(c, showHorse, key){
   return `<div class="hrrow">
-    <div><span class="d mono">${esc(fmtDay(c.date))}</span>${showHorse ? ` · <b>${esc(hName(c.horseId, c.horseName))}</b>` : ""} ${c.invoiced ? `<span class="pill p-sound">Invoiced</span>` : `<span class="pill p-possible">Not invoiced</span>`}</div>
+    <div><span class="d mono">${esc(fmtDay(c.date))}</span>${showHorse ? ` · <b>${esc(hName(c.horseId, c.horseName))}</b>` : ""} ${c.kind === "shock" ? "" : c.invoiced ? `<span class="pill p-sound">Invoiced</span>` : `<span class="pill p-possible">Not invoiced</span>`}</div>
     ${c.detail ? `<div class="small">${esc(c.detail)}</div>` : ""}
     ${c.notes ? `<div class="small muted">${esc(c.notes)}</div>` : ""}
     ${c.nextDue ? `<div class="small muted">${c.kind === "shock" ? "Next session" : "Next due"} ${esc(fmtDay(c.nextDue))}</div>` : ""}
     <div class="confirm" data-delwrap="${esc(key)}_${esc(c._col)}_${esc(c.id)}">
-      <button class="link small" type="button" data-inv="${esc(c.id)}" data-invcol="${esc(c._col)}" data-invval="${c.invoiced ? "0" : "1"}">${c.invoiced ? "Mark not invoiced" : "Mark invoiced"}</button>
+      ${c.kind === "shock" ? "" : `<button class="link small" type="button" data-inv="${esc(c.id)}" data-invcol="${esc(c._col)}" data-invval="${c.invoiced ? "0" : "1"}">${c.invoiced ? "Mark not invoiced" : "Mark invoiced"}</button>`}
       ${c._col === "care" ? `<button class="link small" type="button" data-delcol="care" data-delid="${esc(c.id)}" data-delkey="${esc(key)}">Delete</button>` : ""}
     </div>
   </div>`;
@@ -1121,7 +1121,7 @@ function careForm(kind, h){
     : kind === "shock" ? `<div class="field"><label for="cDetail_shock">Where on the horse</label><input id="cDetail_shock" type="text" required placeholder="e.g. Left fore suspensory, both hocks, back"></div>
       <div class="field"><label for="cNotes_shock">Notes (optional)</label><textarea id="cNotes_shock" rows="2" placeholder="e.g. settings / pulses, who did it, how the horse took it"></textarea></div>`
     : `<div class="field"><label for="cDetail_worm">Wormer used (optional)</label><input id="cDetail_worm" type="text" placeholder="e.g. Equest Plus Tape"></div>`}
-    <label class="small" style="display:flex;gap:8px;align-items:center;font-weight:400"><input type="checkbox" id="cInv_${kind}"> Already invoiced</label>
+    ${kind === "shock" ? "" : `<label class="small" style="display:flex;gap:8px;align-items:center;font-weight:400"><input type="checkbox" id="cInv_${kind}"> Already invoiced</label>`}
     <div class="row"><button class="btn primary" type="submit">Save</button><button class="btn" type="button" id="cCancel_${kind}">Cancel</button></div>
     <div class="small" id="cMsg_${kind}" hidden></div>
   </form>`;
@@ -1135,7 +1135,7 @@ function bindCareForm(kind, h){
     e.preventDefault();
     const detail = kind === "shoe" ? [SHOEWORK[$("cWork_shoe").value], $("cDetail_shoe").value.trim()].filter(Boolean).join(" · ") : $("cDetail_" + kind).value.trim();
     const rec = { horseId: h.id, horseName: h.name, kind, date: $("cDate_" + kind).value || todayStr(), nextDue: $("cDue_" + kind).value || "",
-      detail, ...(kind === "shock" ? { notes: $("cNotes_shock").value.trim() } : {}), invoiced: $("cInv_" + kind).checked, invoicedAt: $("cInv_" + kind).checked ? new Date().toISOString() : "", createdAt: new Date().toISOString() };
+      detail, ...(kind === "shock" ? { notes: $("cNotes_shock").value.trim() } : {}), ...(kind === "shock" ? {} : { invoiced: $("cInv_" + kind).checked, invoicedAt: $("cInv_" + kind).checked ? new Date().toISOString() : "" }), createdAt: new Date().toISOString() };
     try{ await save("care", uid("c"), rec); }catch(err){ msg("cMsg_" + kind, saveErrMsg(err), false); }
   };
 }
@@ -1169,11 +1169,11 @@ function renderCareOverview(){
   const box = $("careOverview"); if (!box) return;
   const due = dueList();
   const month = S.invMonth || todayStr().slice(0,7);
-  const uninv = CARE_KINDS.flatMap(k => careRecords(null, k)).filter(c => !c.invoiced && (month === "all" || (c.date||"").slice(0,7) === month))
+  const uninv = ["shoe", "worm"].flatMap(k => careRecords(null, k)).filter(c => !c.invoiced && (month === "all" || (c.date||"").slice(0,7) === month))
     .sort((a, b) => (a.date||"").localeCompare(b.date||""));
   const bills = [...S.diary.filter(hasBill).map(r => ({ col: "diary", r, what: DTYPE[r.type] || r.type })), ...S.starts.filter(hasBill).map(r => ({ col: "starts", r, what: `${r.kind === "race" ? "Race" : "Trial"} at ${r.venue}` })), ...S.charges.filter(hasBill).map(r => ({ col: "charges", r, what: CHARGE[r.kind] || "Charge" }))];
   const ubills = bills.filter(b => !b.r.billInvoiced && (month === "all" || (b.r.date||"").slice(0,7) === month)).sort((a, b) => (a.r.date||"").localeCompare(b.r.date||""));
-  const months = [...new Set([...CARE_KINDS.flatMap(k => careRecords(null, k)), ...bills.map(b => b.r)].map(c => (c.date||"").slice(0,7)).filter(Boolean))].sort().reverse();
+  const months = [...new Set([...["shoe", "worm"].flatMap(k => careRecords(null, k)), ...bills.map(b => b.r)].map(c => (c.date||"").slice(0,7)).filter(Boolean))].sort().reverse();
   if (!months.includes(month) && month !== "all") months.unshift(month);
   box.innerHTML = `<div class="card">
     <h3>Shoeing, worming &amp; shockwave due</h3>
