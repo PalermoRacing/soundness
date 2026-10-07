@@ -353,7 +353,7 @@ function describeRec(col, r){
     temps: () => [`Temperature ${r.temp}°C`, nm, fmtDay(dayOf(r.at))],
     starts: () => [`${r.kind === "race" ? "Race" : "Trial"} at ${r.venue}`, nm, fmtDay(r.date)],
     charges: () => [`${CHARGE[r.kind] || "Charge"}${r.billAmount != null ? " " + money(r.billAmount) : ""}`, nm, fmtDay(r.date)],
-    care: () => [r.kind === "worm" ? "Worming" : "Shoeing", nm, fmtDay(r.date)],
+    care: () => [CARE[r.kind]?.name || "Shoeing", nm, fmtDay(r.date)],
     checks: () => ["Gait check", nm, fmtDate(r.createdAt)],
     horses: () => [hShort(r)],
   }[col];
@@ -1074,8 +1074,9 @@ function renderDiaryRecent(){
 }
 function lastWorked(horseId){ return S.diary.find(e => e.horseId === horseId && ["jog","canter","fast","heats","heat1","heat2","track"].includes(e.type)); }
 
-/* ================= shoeing + worming (care) ================= */
-const CARE = { shoe: { name: "Shoeing", verb: "shod", weeks: 6 }, worm: { name: "Worming", verb: "wormed", weeks: 12 } };
+/* ================= shoeing + worming + shockwave (care) ================= */
+const CARE = { shoe: { name: "Shoeing", verb: "shod", weeks: 6 }, worm: { name: "Worming", verb: "wormed", weeks: 12 }, shock: { name: "Shockwave", verb: "done", weeks: 0 } };
+const CARE_KINDS = ["shoe", "worm", "shock"];
 function careRecords(horseId, kind){
   const recs = S.care.filter(c => c.kind === kind && (!horseId || c.horseId === horseId)).map(c => ({...c, _col: "care"}));
   if (kind === "shoe") S.diary.filter(e => e.type === "farrier" && (!horseId || e.horseId === horseId))
@@ -1084,14 +1085,16 @@ function careRecords(horseId, kind){
 }
 function careStatus(horseId, kind){
   const last = careRecords(horseId, kind)[0]; if (!last) return null;
-  const t = todayStr(), due = last.nextDue || addDays(last.date, CARE[kind].weeks * 7);
+  const t = todayStr(), due = last.nextDue || (CARE[kind].weeks ? addDays(last.date, CARE[kind].weeks * 7) : "");
+  if (!due) return { last, due: "", level: "none" };
   return { last, due, level: due < t ? "overdue" : due <= addDays(t, 7) ? "soon" : "ok" };
 }
 function careRow(c, showHorse, key){
   return `<div class="hrrow">
     <div><span class="d mono">${esc(fmtDay(c.date))}</span>${showHorse ? ` · <b>${esc(hName(c.horseId, c.horseName))}</b>` : ""} ${c.invoiced ? `<span class="pill p-sound">Invoiced</span>` : `<span class="pill p-possible">Not invoiced</span>`}</div>
     ${c.detail ? `<div class="small">${esc(c.detail)}</div>` : ""}
-    ${c.nextDue ? `<div class="small muted">Next due ${esc(fmtDay(c.nextDue))}</div>` : ""}
+    ${c.notes ? `<div class="small muted">${esc(c.notes)}</div>` : ""}
+    ${c.nextDue ? `<div class="small muted">${c.kind === "shock" ? "Next session" : "Next due"} ${esc(fmtDay(c.nextDue))}</div>` : ""}
     <div class="confirm" data-delwrap="${esc(key)}_${esc(c._col)}_${esc(c.id)}">
       <button class="link small" type="button" data-inv="${esc(c.id)}" data-invcol="${esc(c._col)}" data-invval="${c.invoiced ? "0" : "1"}">${c.invoiced ? "Mark not invoiced" : "Mark invoiced"}</button>
       ${c._col === "care" ? `<button class="link small" type="button" data-delcol="care" data-delid="${esc(c.id)}" data-delkey="${esc(key)}">Delete</button>` : ""}
@@ -1110,11 +1113,13 @@ function careForm(kind, h){
   return `<form class="seg" id="cf_${kind}" hidden>
     <div class="row">
       <div class="field"><label for="cDate_${kind}">Date ${CARE[kind].verb}</label><input id="cDate_${kind}" type="date" required value="${t}"></div>
-      <div class="field"><label for="cDue_${kind}">Next due</label><input id="cDue_${kind}" type="date" value="${addDays(t, CARE[kind].weeks*7)}"></div>
+      <div class="field"><label for="cDue_${kind}">${kind === "shock" ? "Next session (optional)" : "Next due"}</label><input id="cDue_${kind}" type="date" value="${CARE[kind].weeks ? addDays(t, CARE[kind].weeks*7) : ""}"></div>
     </div>
     ${kind === "shoe" ? `<div class="row">
       <div class="field"><label for="cWork_shoe">Work done</label><select id="cWork_shoe"><option value="full">Full set</option><option value="fronts">Fronts only</option><option value="hinds">Hinds only</option><option value="reset">Reset</option><option value="trim">Trim only</option><option value="lost">Lost shoe replaced</option></select></div>
       <div class="field"><label for="cDetail_shoe">Farrier / shoes (optional)</label><input id="cDetail_shoe" type="text" placeholder="e.g. Dave, alloy fronts"></div></div>`
+    : kind === "shock" ? `<div class="field"><label for="cDetail_shock">Where on the horse</label><input id="cDetail_shock" type="text" required placeholder="e.g. Left fore suspensory, both hocks, back"></div>
+      <div class="field"><label for="cNotes_shock">Notes (optional)</label><textarea id="cNotes_shock" rows="2" placeholder="e.g. settings / pulses, who did it, how the horse took it"></textarea></div>`
     : `<div class="field"><label for="cDetail_worm">Wormer used (optional)</label><input id="cDetail_worm" type="text" placeholder="e.g. Equest Plus Tape"></div>`}
     <label class="small" style="display:flex;gap:8px;align-items:center;font-weight:400"><input type="checkbox" id="cInv_${kind}"> Already invoiced</label>
     <div class="row"><button class="btn primary" type="submit">Save</button><button class="btn" type="button" id="cCancel_${kind}">Cancel</button></div>
@@ -1125,21 +1130,21 @@ function bindCareForm(kind, h){
   const f = $("cf_" + kind); if (!f) return;
   $("cAdd_" + kind).onclick = () => { f.hidden = !f.hidden; };
   $("cCancel_" + kind).onclick = () => { f.hidden = true; };
-  $("cDate_" + kind).onchange = () => { $("cDue_" + kind).value = addDays($("cDate_" + kind).value || todayStr(), CARE[kind].weeks * 7); };
+  if (CARE[kind].weeks) $("cDate_" + kind).onchange = () => { $("cDue_" + kind).value = addDays($("cDate_" + kind).value || todayStr(), CARE[kind].weeks * 7); };
   f.onsubmit = async (e) => {
     e.preventDefault();
-    const detail = kind === "shoe" ? [SHOEWORK[$("cWork_shoe").value], $("cDetail_shoe").value.trim()].filter(Boolean).join(" · ") : $("cDetail_worm").value.trim();
+    const detail = kind === "shoe" ? [SHOEWORK[$("cWork_shoe").value], $("cDetail_shoe").value.trim()].filter(Boolean).join(" · ") : $("cDetail_" + kind).value.trim();
     const rec = { horseId: h.id, horseName: h.name, kind, date: $("cDate_" + kind).value || todayStr(), nextDue: $("cDue_" + kind).value || "",
-      detail, invoiced: $("cInv_" + kind).checked, invoicedAt: $("cInv_" + kind).checked ? new Date().toISOString() : "", createdAt: new Date().toISOString() };
+      detail, ...(kind === "shock" ? { notes: $("cNotes_shock").value.trim() } : {}), invoiced: $("cInv_" + kind).checked, invoicedAt: $("cInv_" + kind).checked ? new Date().toISOString() : "", createdAt: new Date().toISOString() };
     try{ await save("care", uid("c"), rec); }catch(err){ msg("cMsg_" + kind, saveErrMsg(err), false); }
   };
 }
 function careCard(kind, h){
   const st = careStatus(h.id, kind), recs = careRecords(h.id, kind);
-  const pill = !st ? "" : st.level === "overdue" ? `<span class="pill p-lame">Overdue</span>` : st.level === "soon" ? `<span class="pill p-possible">Due soon</span>` : `<span class="pill p-sound">Up to date</span>`;
+  const pill = !st || (kind === "shock" && st.level === "ok") || st.level === "none" ? "" : st.level === "overdue" ? `<span class="pill p-lame">Overdue</span>` : st.level === "soon" ? `<span class="pill p-possible">Due soon</span>` : `<span class="pill p-sound">Up to date</span>`;
   return `<div class="card"><div class="topline"><h3>${CARE[kind].name} ${pill}</h3><button class="link" type="button" id="cAdd_${kind}">+ Record ${CARE[kind].name.toLowerCase()}</button></div>
     ${careForm(kind, h)}
-    ${st ? `<div class="kv"><dt>Last ${CARE[kind].verb}</dt><dd>${esc(fmtDay(st.last.date))}</dd><dt>Next due</dt><dd>${esc(fmtDay(st.due))}</dd></div>
+    ${st ? `<div class="kv"><dt>Last ${CARE[kind].verb}</dt><dd>${esc(fmtDay(st.last.date))}</dd>${kind === "shock" ? `<dt>Where</dt><dd>${esc(st.last.detail || "–")}</dd>` : ""}${st.due ? `<dt>${kind === "shock" ? "Next session" : "Next due"}</dt><dd>${esc(fmtDay(st.due))}</dd>` : ""}</div>
       <details data-fold="hist_${kind}" ${foldOpen("hist_" + kind) ? "open" : ""}><summary class="small">History (${recs.length})</summary><div class="history" style="margin-top:8px">${recs.map(c => careRow(c, false, "c" + kind)).join("")}</div></details>`
       : `<p class="muted small" style="margin:0">Nothing recorded yet.</p>`}
   </div>`;
@@ -1147,8 +1152,8 @@ function careCard(kind, h){
 /* due alarms across all horses */
 function dueList(){
   const out = [];
-  for (const h of S.horses) for (const kind of ["shoe", "worm"]){
-    const st = careStatus(h.id, kind); if (st && st.level !== "ok") out.push({ h, kind, ...st });
+  for (const h of S.horses) for (const kind of CARE_KINDS){
+    const st = careStatus(h.id, kind); if (st && st.level !== "ok" && st.level !== "none") out.push({ h, kind, ...st });
   }
   return out.sort((a, b) => a.due.localeCompare(b.due));
 }
@@ -1164,14 +1169,14 @@ function renderCareOverview(){
   const box = $("careOverview"); if (!box) return;
   const due = dueList();
   const month = S.invMonth || todayStr().slice(0,7);
-  const uninv = [...careRecords(null, "shoe"), ...careRecords(null, "worm")].filter(c => !c.invoiced && (month === "all" || (c.date||"").slice(0,7) === month))
+  const uninv = CARE_KINDS.flatMap(k => careRecords(null, k)).filter(c => !c.invoiced && (month === "all" || (c.date||"").slice(0,7) === month))
     .sort((a, b) => (a.date||"").localeCompare(b.date||""));
   const bills = [...S.diary.filter(hasBill).map(r => ({ col: "diary", r, what: DTYPE[r.type] || r.type })), ...S.starts.filter(hasBill).map(r => ({ col: "starts", r, what: `${r.kind === "race" ? "Race" : "Trial"} at ${r.venue}` })), ...S.charges.filter(hasBill).map(r => ({ col: "charges", r, what: CHARGE[r.kind] || "Charge" }))];
   const ubills = bills.filter(b => !b.r.billInvoiced && (month === "all" || (b.r.date||"").slice(0,7) === month)).sort((a, b) => (a.r.date||"").localeCompare(b.r.date||""));
-  const months = [...new Set([...careRecords(null, "shoe"), ...careRecords(null, "worm"), ...bills.map(b => b.r)].map(c => (c.date||"").slice(0,7)).filter(Boolean))].sort().reverse();
+  const months = [...new Set([...CARE_KINDS.flatMap(k => careRecords(null, k)), ...bills.map(b => b.r)].map(c => (c.date||"").slice(0,7)).filter(Boolean))].sort().reverse();
   if (!months.includes(month) && month !== "all") months.unshift(month);
   box.innerHTML = `<div class="card">
-    <h3>Shoeing &amp; worming due</h3>
+    <h3>Shoeing, worming &amp; shockwave due</h3>
     ${due.length ? `<div class="history">${due.map(d => `<div class="hrrow"><div><b><button class="link" type="button" data-openh="${esc(d.h.id)}">${esc(hShort(d.h))}</button></b> · ${CARE[d.kind].name} ${d.level === "overdue" ? `<span class="pill p-lame">Overdue</span>` : `<span class="pill p-possible">Due soon</span>`}</div><div class="small">Due ${esc(fmtDay(d.due))} · last ${CARE[d.kind].verb} ${esc(fmtDay(d.last.date))}</div></div>`).join("")}</div>`
       : `<p class="muted small" style="margin:0">Nothing due in the next week.</p>`}
     <div class="topline" style="margin-top:6px"><h3>Not yet invoiced</h3>
@@ -1249,7 +1254,7 @@ async function addSupp(e){
   try{ await saveSupps(list, S.suppDetails || {}); $("suppNew").value = ""; msg("suppMsg", `Added ${names.length}. Now enter the cost for each.`, true); }catch(err){ msg("suppMsg", saveErrMsg(err), false); }
 }
 /* collapsible sections on the horse page; remembers what you opened or closed on this device */
-const FOLD_DEFAULT = { ai: true, supp: false, diary: false, hr: false, hist_shoe: false, hist_worm: false };
+const FOLD_DEFAULT = { ai: true, supp: false, diary: false, hr: false, hist_shoe: false, hist_worm: false, hist_shock: false };
 function foldOpen(key){ try{ const v = localStorage.getItem("fold_" + key); if (v !== null) return v === "1"; }catch(_){} return !!FOLD_DEFAULT[key]; }
 function fold(key, title, sub, body, extraClass = ""){
   return `<details class="fold ${extraClass}" data-fold="${key}" ${foldOpen(key) ? "open" : ""}>
@@ -1289,6 +1294,7 @@ async function analyseHorse(h){
   allTemps().filter(t => t.horseId === h.id && t.at >= since).slice(0, 30).forEach(t => lines.push(`${dayOf(t.at)} TEMPERATURE ${t.temp}°C`));
   S.checks.filter(c => c.horseId === h.id && (c.createdAt||"") >= since).slice(0, 6).forEach(c => lines.push(`${(c.createdAt||"").slice(0,10)} GAIT CHECK (${c.mode === "measure" ? "measured" : "AI opinion"}): ${c.result?.verdict}; ${(c.result?.limbs||[]).filter(l => l.level !== "none").map(l => l.limb + " " + l.level).join(", ") || "no leg flagged"}`));
   for (const kind of ["shoe", "worm"]){ const st = careStatus(h.id, kind); if (st) lines.push(`${CARE[kind].name}: last ${st.last.date}, next due ${st.due}${st.level !== "ok" ? " (" + st.level + ")" : ""}`); }
+  careRecords(h.id, "shock").filter(c => c.date >= since).forEach(c => lines.push(`${c.date} SHOCKWAVE on ${c.detail || "?"}${c.notes ? "; " + c.notes : ""}`));
   if ((h.supplements||[]).length) lines.push(`Supplements: ${h.supplements.map(n => { const q = (h.suppQty||{})[n]; return q != null ? `${n} (${q} ${suppInfo(n).unit}/day)` : n; }).join(", ")}`);
   const prompt = `You are an experienced New Zealand harness racing trainer's assistant. Review this ${h.gait === "trotter" ? "trotter" : "pacer"}'s recent records and write a short, practical training summary for the stable. Today is ${todayStr()}.
 Horse: race name ${h.name}${h.stableName ? ", stable name " + h.stableName : ""}.${h.notes ? " Notes: " + h.notes : ""}
@@ -1401,6 +1407,7 @@ function renderHorseDetail(){
 
     ${careCard("shoe", h)}
     ${careCard("worm", h)}
+    ${careCard("shock", h)}
     ${suppCard(h)}
 
     <div class="card">${fold("diary", "Work diary", hd.length ? esc(`${hd.length} ${hd.length === 1 ? "entry" : "entries"} · last ${DTYPE[hd[0].type] || hd[0].type}, ${fmtDay(hd[0].date)}`) : "No work yet",
@@ -1467,7 +1474,7 @@ function renderHorseDetail(){
     yes.onclick = () => { box.remove(); commit(false); };
     no.onclick = () => box.remove();
   });
-  bindCareForm("shoe", h); bindCareForm("worm", h);
+  CARE_KINDS.forEach(k => bindCareForm(k, h));
   $("editThis").onclick = () => { S.editHorse = !S.editHorse; $("editForm").hidden = !S.editHorse; if (S.editHorse) $("eName").focus(); };
   $("eCancel").onclick = () => { S.editHorse = false; rerender(); };
   $("editForm").onsubmit = async (e) => {
@@ -1478,7 +1485,7 @@ function renderHorseDetail(){
     catch(err){ msg("eMsg", saveErrMsg(err), false); }
   };
   if ($("diaryMore")) $("diaryMore").onclick = () => { S.showAllDiary = !S.showAllDiary; rerender(); };
-  ["w","s","x","t","h","cshoe","cworm"].forEach(k => bindDeletes(d, k, rerender)); bindDiaryHr(d); bindBills(d); bindFolds(d);
+  ["w","s","x","t","h","cshoe","cworm","cshock"].forEach(k => bindDeletes(d, k, rerender)); bindDiaryHr(d); bindBills(d); bindFolds(d);
   bindInvoice(d);
   d.querySelectorAll("[data-check]").forEach(b => b.onclick = () => { S.openCheck = b.dataset.check; rerender(); window.scrollTo(0,0); });
   $("delHorse").onclick = () => confirmIn($("delHWrap"), `Delete ${hShort(h)} and all their records? You can restore them from Recently deleted in Settings for 30 days.`, async () => {
