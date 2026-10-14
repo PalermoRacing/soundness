@@ -913,7 +913,7 @@ function setDiaryMode(m){
   $("dForm").hidden = m !== "work"; $("sForm").hidden = m !== "start"; $("xForm").hidden = m !== "charge"; msg("dMsg","",true);
 }
 const SETF = ["dDistance","dFull","d800","d400"];
-/* Heats shows two sets of distance/times; 400 m for everything except a jog */
+/* Heats shows two sets of distance/times; 400m for everything except a jog */
 function syncWorkFields(){
   const t = $("dType").value, heats = t === "heats";
   $("dSet2").hidden = !heats;
@@ -954,7 +954,7 @@ async function saveStart(e){
 }
 function diaryDetail(e){
   if (e.type === "farrier") return [SHOEWORK[e.shoeWork], e.shoeType, e.farrier ? `by ${e.farrier}` : ""].filter(Boolean).join(" · ");
-  const one = (x) => [x.distance, x.fullTime ? `full time ${x.fullTime}` : "", x.time800 ? `800 m ${x.time800}` : "", x.time400 ? `400 m ${x.time400}` : ""].filter(Boolean).join(" · ");
+  const one = (x) => [/^\d+(\.\d+)?$/.test(x.distance || "") ? x.distance + "m" : x.distance, x.fullTime ? `full time ${x.fullTime}` : "", x.time800 ? `800m ${x.time800}` : "", x.time400 ? `400m ${x.time400}` : ""].filter(Boolean).join(" · ");
   if (Array.isArray(e.heats)) return e.heats.map((x, i) => { const d = one(x); return d ? `Heat ${i + 1}: ${d}` : ""; }).filter(Boolean).join("\n");
   return [e.minutes != null ? `${e.minutes} min` : "", one(e), e.times].filter(Boolean).join(" · ");
 }
@@ -1301,7 +1301,7 @@ Horse: race name ${h.name}${h.stableName ? ", stable name " + h.stableName : ""}
 RECORDS (newest first within each type):
 ${lines.join("\n") || "No records yet."}
 
-Look for: workload pattern (how often jogged / cantered / fast work / heats — Heat (1) and Heat (2) on the same day are one heats session with heart rate taken after Heat (2) — rest gaps), whether full and 800 m times are improving or slowing, heart-rate recovery trends, any raised temperatures, gait check flags, and shoeing/worming due. Only comment on what the data shows; say when there isn't enough data. Plain NZ English, no fluff. Don't diagnose; suggest checking with the vet where appropriate.
+Look for: workload pattern (how often jogged / cantered / fast work / heats — Heat (1) and Heat (2) on the same day are one heats session with heart rate taken after Heat (2) — rest gaps), whether full and 800m times are improving or slowing, heart-rate recovery trends, any raised temperatures, gait check flags, and shoeing/worming due. Only comment on what the data shows; say when there isn't enough data. Plain NZ English, no fluff. Don't diagnose; suggest checking with the vet where appropriate.
 Reply with ONLY JSON: {"headline":"one sentence","points":["3-6 short observations"],"watch":["0-4 things to keep an eye on or do next"]}`;
   try{
     S.ctl = new AbortController();
