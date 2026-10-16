@@ -1,6 +1,7 @@
 // Palermo Racing Diary — app logic
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-app.js";
-import { getAuth, GoogleAuthProvider, signInWithPopup, signInWithRedirect, getRedirectResult, onAuthStateChanged, signOut }
+import { getAuth, GoogleAuthProvider, signInWithPopup, signInWithRedirect, getRedirectResult, onAuthStateChanged, signOut,
+  signInWithEmailAndPassword, EmailAuthProvider, linkWithCredential, updatePassword, sendPasswordResetEmail }
   from "https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js";
 import { getFirestore, collection, doc, setDoc, deleteDoc, onSnapshot, query, orderBy, limit }
   from "https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js";
@@ -45,7 +46,7 @@ function boot(){
     S.unsubs.forEach(u => u()); S.unsubs = [];
     S.me = user;
     $("signinView").hidden = !!user; $("appView").hidden = !user; $("who").hidden = !user;
-    if (user){ $("whoName").textContent = user.displayName || user.email; startData(); }
+    if (user){ $("whoName").textContent = user.displayName || user.email; $("pwEmail").textContent = user.email || ""; $("pwUser").value = user.email || ""; startData(); }
   });
 }
 function showSigninErr(err){
@@ -53,6 +54,48 @@ function showSigninErr(err){
   const m = {"auth/unauthorized-domain":"This web address isn't on Firebase's authorised domains list yet (setup guide, step 3).",
     "auth/popup-closed-by-user":"", "auth/cancelled-popup-request":""}[err.code];
   alertBox("signinMsg", m ?? ("Sign-in didn't work: " + (err.message || err.code)));
+}
+/* ---- email + password (for Bluefy, where Google sign-in is blocked) ---- */
+const IS_BLUEFY = /Bluefy/i.test(navigator.userAgent) || (/iPhone|iPad|iPod/.test(navigator.userAgent) && !!navigator.bluetooth);
+const PW_ERR = {
+  "auth/operation-not-allowed": "Email and password sign-in is switched off for this diary. In the Firebase console go to Authentication, then Sign-in method, then Email/Password, and turn it on.",
+  "auth/invalid-credential": "That email or password isn't right. If you haven't set a diary password yet, do it in Settings (in Safari) first.",
+  "auth/wrong-password": "That password isn't right.",
+  "auth/user-not-found": "There's no diary password for that email yet. Set one in Settings (in Safari) first.",
+  "auth/invalid-email": "That doesn't look like an email address.",
+  "auth/too-many-requests": "Too many tries. Wait a few minutes and try again.",
+  "auth/weak-password": "Pick a longer password (at least 8 characters).",
+  "auth/requires-recent-login": "For safety, sign out and sign back in with Google, then set the password straight away.",
+  "auth/email-already-in-use": "This email already has a password. Use Forgot password on the sign-in screen to set a new one.",
+  "auth/credential-already-in-use": "This email already has a password. Use Forgot password on the sign-in screen to set a new one.",
+  "auth/network-request-failed": "No internet connection. Try again when you have signal."
+};
+const pwErr = (err) => PW_ERR[err?.code] || ("That didn't work: " + (err?.message || err?.code || "unknown error"));
+async function pwSignIn(e){
+  e.preventDefault(); alertBox("signinMsg", "");
+  try{ await signInWithEmailAndPassword(S.auth, $("pwEmailIn").value.trim().toLowerCase(), $("pwIn").value); $("pwIn").value = ""; }
+  catch(err){ alertBox("signinMsg", pwErr(err)); }
+}
+async function pwForgot(){
+  const email = $("pwEmailIn").value.trim().toLowerCase();
+  if (!email){ alertBox("signinMsg", "Type your email above first, then tap Forgot password."); $("pwEmailIn").focus(); return; }
+  try{ await sendPasswordResetEmail(S.auth, email); alertBox("signinMsg", `If ${email} has a diary password, we've emailed a link to set a new one. Check your inbox (and junk folder).`); }
+  catch(err){ alertBox("signinMsg", pwErr(err)); }
+}
+async function pwSet(e){
+  e.preventDefault();
+  const a = $("pwNew").value, b = $("pwNew2").value, user = S.auth.currentUser;
+  if (!user) return;
+  if (a.length < 8) return msg("pwMsg", "Use at least 8 characters.", false);
+  if (a !== b) return msg("pwMsg", "The two passwords don't match.", false);
+  $("pwSave").disabled = true;
+  try{
+    if (user.providerData.some(p => p.providerId === "password")) await updatePassword(user, a);
+    else await linkWithCredential(user, EmailAuthProvider.credential(user.email, a));
+    $("pwNew").value = $("pwNew2").value = "";
+    msg("pwMsg", `Done. In Bluefy, sign in with ${user.email} and this password.`, true);
+  }catch(err){ msg("pwMsg", pwErr(err), false); }
+  finally{ $("pwSave").disabled = false; }
 }
 async function doSignIn(){
   alertBox("signinMsg","");
@@ -138,6 +181,10 @@ function showTab(t){
 }
 function bindUI(){
   $("signInBtn").onclick = doSignIn;
+  $("pwSignIn").onsubmit = pwSignIn;
+  $("pwForgot").onclick = pwForgot;
+  $("pwForm").onsubmit = pwSet;
+  if (IS_BLUEFY){ $("bluefyNote").hidden = false; $("pwBox").open = true; $("signInBtn").classList.remove("primary"); }
   $("signOutBtn").onclick = () => signOut(S.auth);
   $("settingsBtn").onclick = () => showTab("settings");
   $("settingsBack").onclick = () => showTab(S.prevTab);

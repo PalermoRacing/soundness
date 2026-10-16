@@ -31,7 +31,16 @@
     <div class="card signin">
       <h2>Sign in</h2>
       <p class="muted" style="margin:0">Use the Google account the stable has added to the team list.</p>
+      <div id="bluefyNote" class="banner" hidden>Google sign-in doesn't work inside the Bluefy app. Sign in below with your email and your diary password instead. No password yet? Open the diary in Safari, go to <b>Settings</b> and set one there first.</div>
       <button class="btn primary big" id="signInBtn" type="button">Sign in with Google</button>
+      <details id="pwBox">
+        <summary class="small">Sign in with email and password</summary>
+        <form id="pwSignIn" class="seg" style="margin-top:8px">
+          <div class="field"><label for="pwEmailIn">Email</label><input id="pwEmailIn" type="email" autocomplete="username" required placeholder="you@gmail.com"></div>
+          <div class="field"><label for="pwIn">Diary password</label><input id="pwIn" type="password" autocomplete="current-password" required></div>
+          <div class="row"><button class="btn primary" type="submit">Sign in</button><button class="link" type="button" id="pwForgot">Forgot password?</button></div>
+        </form>
+      </details>
       <div id="signinMsg" class="banner" hidden></div>
     </div>
   </section>
@@ -335,6 +344,17 @@
       <div class="field"><label for="setModel">AI model (leave blank for the default)</label><input id="setModel" type="text" autocomplete="off" placeholder="gemini-3-flash-preview"></div>
       <div class="row"><button class="btn primary" type="submit">Save settings</button><button class="btn" type="button" id="testKeyBtn">Test the key</button></div>
       <div id="settingsMsg" class="small" hidden></div>
+    </form>
+    <form class="card" id="pwForm">
+      <h2>Password for the Bluefy app</h2>
+      <p class="muted small" style="margin:0">Google sign-in doesn't work inside Bluefy (the iPhone browser the sensors need). Set a password here, then in Bluefy choose <b>Sign in with email and password</b> and use <b id="pwEmail"></b> with this password. Everything else stays the same.</p>
+      <input type="email" id="pwUser" autocomplete="username" hidden>
+      <div class="row">
+        <div class="field"><label for="pwNew">New password</label><input id="pwNew" type="password" autocomplete="new-password" minlength="8" required></div>
+        <div class="field"><label for="pwNew2">Type it again</label><input id="pwNew2" type="password" autocomplete="new-password" minlength="8" required></div>
+      </div>
+      <div class="row"><button class="btn primary" type="submit" id="pwSave">Set password</button></div>
+      <div id="pwMsg" class="small" hidden></div>
     </form>
     <form class="card" id="suppForm">
       <h2>Supplements</h2>
