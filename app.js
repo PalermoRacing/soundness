@@ -13,7 +13,7 @@ const GEMINI = "https://generativelanguage.googleapis.com";
 const DEFAULT_MODEL = "gemini-3-flash-preview";
 const INLINE_MAX = 14 * 1024 * 1024;   // videos up to ~14 MB are sent directly
 
-const FOOTAGE = { inhand_straight:"In hand, towards/away", inhand_side:"In hand, side-on", behind:"From behind, walked/run away", cart:"In the cart", lunge:"Lunging / circle" };
+const FOOTAGE = { inhand_straight:"In hand, towards/away", inhand_side:"In hand, side-on", behind:"From behind, walked/run away", cart:"In the cart", lunge:"Lunging / circle", s_inhand:"Sensors, in hand", s_cart:"Sensors, in the cart", s_lunge:"Sensors, on a circle" };
 const LIMBS = {LF:"Left fore", RF:"Right fore", LH:"Left hind", RH:"Right hind"};
 const VERDICT = {sound:"Looks sound", possible:"Possible lameness", lame:"Lame", unclear:"Can't tell"};
 const LEVEL = {none:"No sign", watch:"Watch", suspect:"Suspect", likely:"Likely"};
@@ -158,7 +158,8 @@ function bindUI(){
   $("tForm").onsubmit = saveTemp;
   $("suppForm").onsubmit = addSupp;
   resetDiaryForm(); setDiaryMode("work");
-  $("horseSel").onchange = updateAnalyseBtn;
+  $("horseSel").onchange = () => { updateAnalyseBtn(); updateSensorBtns(); };
+  bindSensors();
   $("horseSearch").oninput = renderHorses;
   resetHrWhen();
   $("videoIn").onchange = (e) => { const f = e.target.files[0]; if (f) loadVideo(f); };
@@ -564,6 +565,172 @@ async function measure(){
     $("status").hidden = true; updateAnalyseBtn();
   }
 }
+/* ---- gait check with the three motion sensors ---- */
+const SROLES = ["head", "pelvis", "rfore"];
+const SCOL = { head: "#1f4ef8", pelvis: "#2bd152", rfore: "#ff8c00" };
+function setCheckMode(mode){
+  S.checkMode = mode;
+  try{ localStorage.setItem("checkMode", mode); }catch(_){}
+  $("panel-check").classList.toggle("mode-sensors", mode === "sensors");
+  $("modeVideo").classList.toggle("primary", mode !== "sensors"); $("modeVideo").setAttribute("aria-pressed", String(mode !== "sensors"));
+  $("modeSensors").classList.toggle("primary", mode === "sensors"); $("modeSensors").setAttribute("aria-pressed", String(mode === "sensors"));
+  if (mode === "sensors") renderSensorRows();
+}
+function bindSensors(){
+  S.sticks = S.sticks || {};
+  $("modeVideo").onclick = () => setCheckMode("video");
+  $("modeSensors").onclick = () => setCheckMode("sensors");
+  let m = "video"; try{ m = localStorage.getItem("checkMode") || "video"; }catch(_){}
+  setCheckMode(m);
+  $("sNoBt").hidden = !!window.Sensors?.supported();
+  $("sCopyLink").onclick = async () => { try{ await navigator.clipboard.writeText(location.href.split("#")[0]); $("sCopyLink").textContent = "Copied"; }catch(_){ prompt("Copy this link into Bluefy:", location.href.split("#")[0]); } };
+  $("sConnect").onclick = connectSensor;
+  $("sStart").onclick = startSensors;
+  $("sStop").onclick = stopSensors;
+}
+function stickLine(role){
+  const s = S.sticks[role];
+  if (!s) return `<span class="muted">Not connected</span>`;
+  if (!s.connected) return `<span class="err-text">Lost touch</span>${s.status?.n ? ` · has ${Math.round(s.status.n / 100)} s recorded` : ""}`;
+  const st = s.status; if (!st) return "Connected";
+  const bat = st.battery >= 0 && st.battery <= 100 ? ` · battery ${st.battery}%` : "";
+  return st.recording ? `<b>Recording</b> ${Math.floor(st.n / 6000)}:${String(Math.floor(st.n / 100) % 60).padStart(2, "0")}${bat}`
+    : `Connected${bat}${st.n ? ` · ${Math.round(st.n / 100)} s recorded` : ""}`;
+}
+function renderSensorRows(){
+  const box = $("sRows"); if (!box) return;
+  box.innerHTML = SROLES.map(r => `<div class="hrrow srow"><span class="sdot" style="background:${SCOL[r]}"></span><span class="sname">${Sensors.ROLE_LABEL[r]}</span><span class="sst small">${stickLine(r)}</span>
+    ${S.sticks[r] ? `<button class="link small" type="button" data-sdrop="${r}">${S.sticks[r].connected ? "Disconnect" : "Reconnect"}</button>` : ""}</div>`).join("");
+  box.querySelectorAll("[data-sdrop]").forEach(b => b.onclick = async () => {
+    const s = S.sticks[b.dataset.sdrop];
+    if (s.connected){ s.disconnect(); delete S.sticks[b.dataset.sdrop]; }
+    else { try{ await s.reconnect(); }catch(err){ alertBox("checkError", "Couldn't reconnect. Make sure the stick is on and close by."); } }
+    renderSensorRows();
+  });
+  const all = SROLES.every(r => S.sticks[r]);
+  $("sConnect").hidden = all;
+  $("sConnect").textContent = `+ Connect ${Object.keys(S.sticks).length ? "the next" : "a"} sensor`;
+  updateSensorBtns();
+}
+function updateSensorBtns(){
+  if (!$("sStart")) return;
+  const ready = SROLES.every(r => S.sticks[r]?.connected) && $("horseSel").value;
+  $("sStart").disabled = !ready || !!S.sBusy;
+}
+function sStatus(text, p){
+  $("sStatus").hidden = !text; $("sStatusText").textContent = text || "";
+  $("sBar").hidden = p === undefined || p === null; if (p != null) $("sFill").style.width = Math.round(p * 100) + "%";
+}
+async function connectSensor(){
+  alertBox("checkError", "");
+  try{
+    const s = await Sensors.connectOne();
+    if (!s.role){ s.disconnect(); throw new Error("That doesn't look like one of the gait sticks."); }
+    if (S.sticks[s.role] && S.sticks[s.role].device.id !== s.device.id){
+      s.disconnect();
+      throw new Error(`Another stick is already connected as ${Sensors.ROLE_LABEL[s.role]}. Press the front button on this stick to change it to the missing one, then connect it again.`);
+    }
+    s._onChange = () => renderSensorRows();
+    S.sticks[s.role] = s;
+  }catch(err){
+    if (err?.name !== "NotFoundError") alertBox("checkError", err?.message || "Couldn't connect to the sensor.");
+  }
+  renderSensorRows();
+}
+async function startSensors(){
+  const horse = S.horses.find(h => h.id === $("horseSel").value); if (!horse) return;
+  alertBox("checkError", ""); $("reportOut").innerHTML = "";
+  S.sBusy = true; updateSensorBtns();
+  try{
+    for (const r of SROLES){ sStatus(`Lining up the ${Sensors.ROLE_LABEL[r].toLowerCase()} sensor's clock…`); S.sticks[r].syncStart = await S.sticks[r].sync(); }
+    await Promise.all(SROLES.map(r => S.sticks[r].cmd("START")));
+    S.sRecAt = Date.now();
+    $("sStart").hidden = true; $("sStop").hidden = false;
+    clearInterval(S.sTick);
+    S.sTick = setInterval(() => { const s = Math.round((Date.now() - S.sRecAt) / 1000); sStatus(`Recording… ${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}. Trot straight away, turn, and come back. Two or three times.`); }, 1000);
+    sStatus("Recording… trot the horse now.");
+  }catch(err){
+    alertBox("checkError", (err?.message || "Couldn't start the sensors.") + " Check all three are on and close by.");
+    sStatus("");
+  }finally{ S.sBusy = false; updateSensorBtns(); }
+}
+async function stopSensors(){
+  const horse = S.horses.find(h => h.id === $("horseSel").value);
+  clearInterval(S.sTick);
+  $("sStop").disabled = true;
+  const recs = {};
+  try{
+    for (const r of SROLES){
+      const s = S.sticks[r];
+      sStatus(`Stopping the ${Sensors.ROLE_LABEL[r].toLowerCase()} sensor…`);
+      if (!s.connected){ sStatus(`Reconnecting the ${Sensors.ROLE_LABEL[r].toLowerCase()} sensor…`); await s.reconnect(); }
+      await s.cmd("STOP");
+    }
+    await new Promise(r => setTimeout(r, 400));
+    for (const r of SROLES){
+      const s = S.sticks[r];
+      sStatus(`Lining up the ${Sensors.ROLE_LABEL[r].toLowerCase()} sensor's clock…`);
+      const end = await s.sync();
+      // average the start and end clock readings (sticks' clocks drift a tiny amount)
+      s.offsetMs = s.syncStart ? (s.syncStart.off + end.off) / 2 : end.off;
+      recs[r] = await s.download((p) => sStatus(`Downloading the ${Sensors.ROLE_LABEL[r].toLowerCase()} sensor… ${Math.round(p * 100)}%`, p));
+    }
+    sStatus("Working out the strides…", null);
+    const gait = $("sGait").value || (horse?.gait === "trotter" ? "trotter" : "pacer");
+    const a = Sensors.analyse(recs, { gait });
+    const how = $("sHow").value;
+    const notes = [...a.notes];
+    if (how === "s_lunge") notes.unshift("This was on a circle. Horses move unevenly on a circle even when sound (usually the inside hip and head), so compare with a straight-line check before deciding anything.");
+    if (how === "s_cart") notes.unshift("In the cart the head is held by the reins and check, so the front-leg reading is less reliable than in hand.");
+    const next = a.verdict === "sound" ? ["Repeat after hard work, or whenever something doesn't feel right, so you have a record of this horse's normal."]
+      : a.verdict === "unclear" ? ["Trot in a straight line for longer (at least 30 m, two or three times) and check again."]
+      : ["Check the flagged leg: feel for heat and a digital pulse, hoof-test it and check the shoe.", "Run the sensor check again tomorrow to see if it's the same.", a.verdict === "lame" ? "A result marked Likely is worth a call to the vet." : "If it shows up again, or gets worse, call the vet."];
+    const result = normalise({ verdict: a.verdict, grade: null, confidence: a.confidence, gait_seen: gait === "trotter" ? "trot" : "pace", summary: a.summary, limbs: a.limbs,
+      observations: [], footage: { rating: a.strides >= 25 ? "good" : a.strides >= 12 ? "fair" : "poor", issues: [] }, next_steps: next, refilm_tips: [] });
+    const metrics = { ...a.numbers, strides: a.strides, totalStrides: a.totalStrides, turning: a.turning, strideTime: +a.strideTime.toFixed(2), gait, notes,
+      curves: a.curves ? { head: a.curves.head.map(v => +v.toFixed(1)), pelvis: a.curves.pelvis.map(v => +v.toFixed(1)) } : null,
+      seconds: Math.round(Math.min(...SROLES.map(r => recs[r].n)) / 100) };
+    const check = { horseId: horse.id, horseName: horse.name, horseGait: horse.gait, footage: how, pace: "jog", surface: "", lungeDir: "",
+      notes: $("notes").value.trim(), mode: "sensors", frameCount: a.strides, createdAt: new Date().toISOString(), result, metrics };
+    $("reportOut").innerHTML = reportHTML(check);
+    try{ await save("checks", uid("c"), check); addSaved(`Saved to ${hShort(horse)}'s history.`); }
+    catch(err){ addSaved(saveErrMsg(err)); }
+    $("notes").value = "";
+    sStatus("");
+    $("reportOut").scrollIntoView({behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth", block:"start"});
+    $("sStop").hidden = true; $("sStart").hidden = false;
+  }catch(err){
+    sStatus("");
+    alertBox("checkError", (err?.message || "Something went wrong.") + " The recording is still on the sticks: tap Stop and check again to retry.");
+  }finally{ $("sStop").disabled = false; renderSensorRows(); }
+}
+function sensorMetricsHTML(m){
+  if (!m) return "";
+  const f = (n) => { if (!Number.isFinite(n)) return "–"; const v = Math.abs(n) < 0.05 ? 0 : n; return (v > 0 ? "+" : "") + v.toFixed(1); };
+  const firstHind = m.gait === "trotter" ? "LH" : "RH", otherHind = firstHind === "LH" ? "RH" : "LH";
+  const curve = (pts, label) => {
+    if (!pts?.length) return "";
+    const W = 320, H = 110, lo = Math.min(...pts), hi = Math.max(...pts), pad = 14, sy = (v) => pad + (hi - v) / ((hi - lo) || 1) * (H - 2 * pad), sx = (i) => i / (pts.length - 1) * W;
+    const d = pts.map((v, i) => `${i ? "L" : "M"}${sx(i).toFixed(1)},${sy(v).toFixed(1)}`).join("");
+    return `<figure style="margin:0"><figcaption class="small muted">${label}</figcaption>
+      <svg class="scurve" viewBox="0 0 ${W} ${H + 16}" role="img" aria-label="${esc(label)} average stride">
+        <rect class="stance" x="0" y="0" width="${W * 0.38}" height="${H}"></rect><rect class="stance" x="${W * 0.5}" y="0" width="${W * 0.38}" height="${H}"></rect>
+        <line class="ax" x1="0" x2="${W}" y1="${sy(0)}" y2="${sy(0)}"></line>
+        <path d="${d}" fill="none" stroke="var(--accent)" stroke-width="2.2"></path>
+        <text x="4" y="${H + 13}">RF + ${firstHind} on ground</text><text x="${W * 0.5 + 4}" y="${H + 13}">LF + ${otherHind}</text>
+      </svg></figure>`;
+  };
+  return `<div><h3 style="margin-bottom:6px">Measurements</h3>
+    <table class="small" style="width:100%;border-collapse:collapse">
+      <tr><th style="text-align:left"></th><th style="text-align:right">Down</th><th style="text-align:right">Up</th><th style="text-align:right">Normal</th></tr>
+      <tr><td>Head</td><td class="mono" style="text-align:right">${f(m.headDiffMin)} <span class="muted">±${(m.headSdMin ?? 0).toFixed(0)}</span></td><td class="mono" style="text-align:right">${f(m.headDiffMax)} <span class="muted">±${(m.headSdMax ?? 0).toFixed(0)}</span></td><td class="mono" style="text-align:right">under 6 mm</td></tr>
+      <tr><td>Pelvis</td><td class="mono" style="text-align:right">${f(m.pelvDiffMin)} <span class="muted">±${(m.pelvSdMin ?? 0).toFixed(0)}</span></td><td class="mono" style="text-align:right">${f(m.pelvDiffMax)} <span class="muted">±${(m.pelvSdMax ?? 0).toFixed(0)}</span></td><td class="mono" style="text-align:right">under 3 mm</td></tr>
+    </table>
+    <p class="small muted" style="margin:6px 0 0">Millimetres of difference between the right-fore half and the left-fore half of each stride, averaged over ${m.strides} strides (${m.totalStrides - m.strides} left out for turns or odd steps; stride ${m.strideTime}s). <b>Down</b> = how much less the head or pelvis drops; <b>up</b> = how much less it rises after push-off. ± shows how much it varied stride to stride.</p>
+    ${m.curves ? `<div style="display:grid;gap:10px;margin-top:10px">${curve(m.curves.head, `Head: average stride (moves ${m.headRange} mm)`)}${curve(m.curves.pelvis, `Pelvis: average stride (moves ${m.pelvRange} mm)`)}</div>` : ""}
+    ${m.notes?.length ? `<ul class="plain small" style="margin:10px 0 0">${m.notes.map(n => `<li>${esc(n)}</li>`).join("")}</ul>` : ""}
+  </div>`;
+}
 function thumbFromCanvas(c, w = 240){ const t = document.createElement("canvas"); t.width = w; t.height = Math.round(c.height * w / c.width); t.getContext("2d").drawImage(c, 0, 0, t.width, t.height); return t.toDataURL("image/jpeg", 0.7); }
 
 function seekTo(v, t){
@@ -873,7 +1040,7 @@ function fmtDate(iso){ try{ return new Date(iso).toLocaleString("en-NZ",{day:"nu
 function limbCell(l){ return `<div class="limb l-${l.level}"><span class="code">${l.limb}</span><span class="lvl">${LEVEL[l.level]}</span>${l.reason?`<span class="why">${esc(l.reason)}</span>`:""}</div>`; }
 function reportHTML(c, opts={}){
   const r = c.result; const L = Object.fromEntries(r.limbs.map(l=>[l.limb,l]));
-  const src = c.mode === "frames" ? `${c.frameCount} still frames` : c.mode === "measure" ? `measured · ${c.frameCount} frames` : "AI opinion";
+  const src = c.mode === "frames" ? `${c.frameCount} still frames` : c.mode === "measure" ? `measured · ${c.frameCount} frames` : c.mode === "sensors" ? `3 sensors · ${c.frameCount} strides` : "AI opinion";
   const win = c.window ? ` · ${c.window.start}s–${(c.window.start+c.window.len).toFixed(1)}s` : "";
   return `<div class="report card${c.example?" is-example":""}">
     ${c.example ? `<div><span class="pill p-example">Example report</span> <span class="small muted">What a result looks like. Not one of your horses.</span></div>` : ""}
@@ -882,21 +1049,21 @@ function reportHTML(c, opts={}){
     <div class="verdict v-${r.verdict}">
       <span class="big">${VERDICT[r.verdict]}</span>
       <span>${esc(r.summary)}</span>
-      <span class="small muted">Confidence: ${esc(r.confidence)} · Gait seen: ${esc(r.gait_seen)} · Footage: ${esc(r.footage.rating)}</span>
+      <span class="small muted">Confidence: ${esc(r.confidence)} · Gait seen: ${esc(r.gait_seen)}${c.mode === "sensors" ? "" : ` · Footage: ${esc(r.footage.rating)}`}</span>
     </div>
-    ${c.mode === "measure" ? "" : `<div><p class="small muted" style="margin:0 0 6px">AAEP lameness grade${r.grade===null?": not enough to grade":""}</p>
+    ${c.mode === "measure" || c.mode === "sensors" ? "" : `<div><p class="small muted" style="margin:0 0 6px">AAEP lameness grade${r.grade===null?": not enough to grade":""}</p>
       <div class="scale">${[0,1,2,3,4,5].map(n=>`<div class="${r.grade===n?"on":""}">${n}</div>`).join("")}</div></div>`}
     <div><p class="small muted" style="margin:0 0 6px">Legs, from the horse's point of view</p>
       <div class="limbs"><span></span><span class="hd">Left</span><span class="hd">Right</span>
         <span class="rh">Front</span>${limbCell(L.LF)}${limbCell(L.RF)}
         <span class="rh">Hind</span>${limbCell(L.LH)}${limbCell(L.RH)}</div></div>
-    ${c.mode === "measure" ? metricsHTML(c.metrics) : ""}
-    ${r.observations.length && c.mode !== "measure" ?`<div><h3 style="margin-bottom:8px">What the AI saw</h3><ul class="obs">${r.observations.map(o=>`<li><span class="fr">${esc(o.when)}</span><span>${esc(o.note)}</span></li>`).join("")}</ul></div>`:""}
+    ${c.mode === "measure" ? metricsHTML(c.metrics) : c.mode === "sensors" ? sensorMetricsHTML(c.metrics) : ""}
+    ${r.observations.length && c.mode !== "measure" && c.mode !== "sensors" ?`<div><h3 style="margin-bottom:8px">What the AI saw</h3><ul class="obs">${r.observations.map(o=>`<li><span class="fr">${esc(o.when)}</span><span>${esc(o.note)}</span></li>`).join("")}</ul></div>`:""}
     ${r.next_steps.length?`<div><h3 style="margin-bottom:8px">Next steps</h3><ul class="plain">${r.next_steps.map(s=>`<li>${esc(s)}</li>`).join("")}</ul></div>`:""}
     ${(r.footage.issues.length||r.refilm_tips.length)?`<div><h3 style="margin-bottom:8px">Better footage next time</h3><ul class="plain">${[...r.footage.issues,...r.refilm_tips].map(s=>`<li>${esc(s)}</li>`).join("")}</ul></div>`:""}
     ${c.notes?`<p class="note" style="margin:0">Your notes: ${esc(c.notes)}</p>`:""}
     ${c.thumbs?.length?`<div class="strip">${c.thumbs.map(u=>`<img src="${esc(u)}" alt="">`).join("")}</div>`:""}
-    <p class="disclaimer">${c.mode === "measure" ? "Measured with a free, general animal-tracking model. It is not a validated lameness system, and mild lameness can still be missed." : "An AI opinion from phone footage, not a diagnosis."} If you're worried, call your vet.</p>
+    <p class="disclaimer">${c.mode === "measure" ? "Measured with a free, general animal-tracking model. It is not a validated lameness system, and mild lameness can still be missed." : c.mode === "sensors" ? "Measured with three home-made motion sensors using the head-and-pelvis method vets use. It isn't a validated system: how firmly the sensors are fitted, the surface and how straight the horse goes all affect it." : "An AI opinion from phone footage, not a diagnosis."} If you're worried, call your vet.</p>
     ${opts.deletable?`<div class="confirm" id="delWrap"><button class="link" type="button" data-del="${esc(c.id)}">Delete this check</button></div>`:""}
   </div>`;
 }
@@ -1292,7 +1459,7 @@ async function analyseHorse(h){
   S.starts.filter(s => s.horseId === h.id && s.date >= addDays(todayStr(), -180)).forEach(s => lines.push(`${s.date} ${s.kind.toUpperCase()} at ${s.venue}${s.placing ? ", placed " + s.placing : ""}${s.time ? ", time " + s.time : ""}${s.notes ? "; " + s.notes : ""}`));
   S.hr.filter(r => r.horseId === h.id && r.at >= since && hasHr(r)).slice(0, 30).forEach(r => lines.push(`${dayOf(r.at)} HEART RATE after ${WORK[r.work]||r.work}: ${r.bpm10 ?? "?"} bpm at 10 min, ${r.bpm20 ?? "?"} at 20 min`));
   allTemps().filter(t => t.horseId === h.id && t.at >= since).slice(0, 30).forEach(t => lines.push(`${dayOf(t.at)} TEMPERATURE ${t.temp}°C`));
-  S.checks.filter(c => c.horseId === h.id && (c.createdAt||"") >= since).slice(0, 6).forEach(c => lines.push(`${(c.createdAt||"").slice(0,10)} GAIT CHECK (${c.mode === "measure" ? "measured" : "AI opinion"}): ${c.result?.verdict}; ${(c.result?.limbs||[]).filter(l => l.level !== "none").map(l => l.limb + " " + l.level).join(", ") || "no leg flagged"}`));
+  S.checks.filter(c => c.horseId === h.id && (c.createdAt||"") >= since).slice(0, 6).forEach(c => lines.push(`${(c.createdAt||"").slice(0,10)} GAIT CHECK (${c.mode === "measure" ? "measured from video" : c.mode === "sensors" ? "measured with sensors" : "AI opinion"}): ${c.result?.verdict}; ${(c.result?.limbs||[]).filter(l => l.level !== "none").map(l => l.limb + " " + l.level).join(", ") || "no leg flagged"}`));
   for (const kind of ["shoe", "worm"]){ const st = careStatus(h.id, kind); if (st) lines.push(`${CARE[kind].name}: last ${st.last.date}, next due ${st.due}${st.level !== "ok" ? " (" + st.level + ")" : ""}`); }
   careRecords(h.id, "shock").filter(c => c.date >= since).forEach(c => lines.push(`${c.date} SHOCKWAVE on ${c.detail || "?"}${c.notes ? "; " + c.notes : ""}`));
   if ((h.supplements||[]).length) lines.push(`Supplements: ${h.supplements.map(n => { const q = (h.suppQty||{})[n]; return q != null ? `${n} (${q} ${suppInfo(n).unit}/day)` : n; }).join(", ")}`);

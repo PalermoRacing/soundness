@@ -147,9 +147,43 @@
         <button class="btn" id="addHorseBtn" type="button">+ Add horse</button>
       </div>
       <div id="addHorseSlot"></div>
+      <div class="modesw" role="group" aria-label="How to check">
+        <button class="btn primary" type="button" id="modeVideo" aria-pressed="true">From a video</button>
+        <button class="btn" type="button" id="modeSensors" aria-pressed="false">With the sensors</button>
+      </div>
     </div>
 
-    <div class="card">
+    <div class="card sonly">
+      <div class="step"><span class="n">2</span><h3>Connect the sensors</h3></div>
+      <div id="sNoBt" class="banner" hidden>This browser can't connect to the sensors. On iPhone, install the free <b>Bluefy</b> browser from the App Store and open the diary in Bluefy. <button class="link" type="button" id="sCopyLink">Copy the diary's link</button></div>
+      <div class="field"><label for="sHow">How the horse is moving</label>
+        <select id="sHow"><option value="s_inhand">Trotted in hand, straight line (best)</option><option value="s_cart">Jogging in the cart, straight</option><option value="s_lunge">Lunging / in a circle</option></select></div>
+      <div class="field"><label for="sGait">Gait today</label>
+        <select id="sGait"><option value="">The horse's usual gait</option><option value="trotter">Trotting (diagonal legs together)</option><option value="pacer">Pacing (same-side legs together)</option></select></div>
+      <div class="history" id="sRows"></div>
+      <button class="btn" type="button" id="sConnect">+ Connect a sensor</button>
+      <details>
+        <summary class="small">Where to put each sensor</summary>
+        <ul class="plain small" style="margin:8px 0 0">
+          <li><b>HEAD:</b> on top of the head, on the headstall or bridle just behind the ears, in the middle. Strap or tape it so it can't flop about.</li>
+          <li><b>PELVIS:</b> on the top of the croup, in the middle, level with the two bony points of the hips. Tape it firmly to a small pad or use a strap so it can't slide.</li>
+          <li><b>R FORE:</b> on the front of the right front pastern, held on with vet wrap or inside a boot pouch.</li>
+          <li>It doesn't matter which way up the sticks are. They just need to be firm, with the screens facing out so you can see them.</li>
+        </ul>
+      </details>
+      <p class="small muted" style="margin:0">New sticks need setting up once on a computer: <a href="sensors/setup.html" target="_blank" rel="noopener">sensor setup page</a>.</p>
+    </div>
+
+    <div class="card sonly">
+      <div class="step"><span class="n">3</span><h3>Record</h3></div>
+      <p class="small" style="margin:0">Tap <b>Start</b>, then trot the horse in a straight line for at least 30 m, turn, and come back. Do it two or three times (25 strides or more). Then tap <b>Stop</b>. Keep the phone with you; the sticks record by themselves even if the phone loses touch with them.</p>
+      <button class="btn primary big" id="sStart" type="button" disabled>Start recording</button>
+      <button class="btn primary big" id="sStop" type="button" hidden>Stop and check</button>
+      <div class="status" id="sStatus" hidden><span class="spinner"></span><span id="sStatusText"></span></div>
+      <div class="bar" id="sBar" hidden><i id="sFill"></i></div>
+    </div>
+
+    <div class="card vonly">
       <div class="step"><span class="n">2</span><h3>What does the video show?</h3></div>
       <div class="row">
         <div class="field"><label for="footage">Camera view</label>
@@ -175,7 +209,7 @@
       </div>
     </div>
 
-    <div class="card">
+    <div class="card vonly">
       <div class="step"><span class="n">3</span><h3>Upload the video</h3></div>
       <label class="file-drop" for="videoIn" id="drop">
         <strong>Choose a video</strong>
@@ -213,18 +247,18 @@
         <textarea id="notes" placeholder="e.g. Felt short on the left front after Saturday's race. Heat in right hind fetlock. New shoes on Tuesday."></textarea></div>
     </div>
 
-    <button class="btn primary big" id="measureBtn" type="button" disabled>Measure movement</button>
-    <button class="link" id="analyseBtn" type="button" disabled style="align-self:center">Or ask the AI for a written opinion (experimental, less reliable)</button>
+    <button class="btn primary big vonly" id="measureBtn" type="button" disabled>Measure movement</button>
+    <button class="link vonly" id="analyseBtn" type="button" disabled style="align-self:center">Or ask the AI for a written opinion (experimental, less reliable)</button>
     <div id="status" hidden>
       <canvas id="trackView" style="width:100%;max-width:100%;border-radius:8px;background:#000;margin-bottom:8px" hidden></canvas>
       <div class="status"><span class="spinner"></span><span id="statusText"></span><button class="link" id="stopBtn" type="button">Stop</button></div>
       <div class="bar" id="progBar" hidden style="margin-top:8px"><i id="progFill"></i></div>
     </div>
-    <div id="stripBox" hidden><p class="small muted" style="margin:0 0 6px" id="stripLabel">Frames sent for analysis</p><div class="strip" id="strip"></div></div>
+    <div id="stripBox" class="vonly" hidden><p class="small muted" style="margin:0 0 6px" id="stripLabel">Frames sent for analysis</p><div class="strip" id="strip"></div></div>
     <div id="checkError" class="banner" hidden></div>
 
     <div id="reportOut"></div>
-    <button class="link" type="button" id="goGuide" style="align-self:center">Filming tips</button>
+    <button class="link vonly" type="button" id="goGuide" style="align-self:center">Filming tips</button>
   </section>
 
   <!-- TEMPERATURE -->
@@ -324,6 +358,7 @@
 </div>
 <script src="https://cdn.jsdelivr.net/npm/onnxruntime-web@1.20.1/dist/ort.webgpu.min.js"></script>
 <script src="measure.js"></script>
+<script src="sensors.js"></script>
 <script src="config.js"></script>
 <script type="module" src="app.js"></script>
 </body>
