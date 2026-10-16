@@ -130,6 +130,15 @@ The code on GitHub is public, but it contains no secrets. The Gemini key is kept
 
 ---
 
+## Optional: the three gait sensors (M5StickS3)
+
+The Gait tab can also check a horse with three M5StickS3 motion sensors instead of a video.
+
+- **Setting up the sticks (once):** open `sensors/setup.html` on the website in Chrome or Edge on a computer, plug in each stick with a USB-C data cable and click Install. Then press each stick's front button until you have one HEAD, one PELVIS and one R FORE.
+- **The sticks' software** is in `firmware/sensor/sensor.ino`. GitHub builds it for free (the "Build sensor firmware" action) whenever that file changes, and saves the result as `sensors/firmware.bin`.
+- **On iPhone** use the free Bluefy browser for sensor checks, because Safari can't connect to Bluetooth devices. Chrome on Android or a laptop works directly.
+- **Fitting:** HEAD on the headstall behind the ears, PELVIS on top of the croup level with the hip bones, R FORE on the front of the right fore pastern. They must be firm. Which way up doesn't matter.
+
 ## Troubleshooting
 
 | Message or problem | Fix |
