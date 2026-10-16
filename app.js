@@ -184,7 +184,7 @@ function bindUI(){
   $("pwSignIn").onsubmit = pwSignIn;
   $("pwForgot").onclick = pwForgot;
   $("pwForm").onsubmit = pwSet;
-  if (IS_BLUEFY){ $("bluefyNote").hidden = false; $("pwBox").open = true; $("signInBtn").classList.remove("primary"); }
+  if (IS_BLUEFY){ $("bluefyNote").hidden = false; $("pwBox").open = true; $("signInBtn").hidden = true; }
   $("signOutBtn").onclick = () => signOut(S.auth);
   $("settingsBtn").onclick = () => showTab("settings");
   $("settingsBack").onclick = () => showTab(S.prevTab);
