@@ -70,15 +70,23 @@ static String statusLine(){
   return String(tmp);
 }
 
+// faster connection interval for downloads (iOS accepts 15–30 ms)
 class ServerCB : public BLEServerCallbacks {
+#if defined(CONFIG_NIMBLE_ENABLED)
+  void onConnect(BLEServer* s, ble_gap_conn_desc* desc) override {
+    connected = true; wantStatus = true;
+    s->requestConnParams(desc->conn_handle, 12, 24, 0, 400);
+  }
+  void onDisconnect(BLEServer* s, ble_gap_conn_desc* desc) override { connected = false; readPending = false; }
+#else
   void onConnect(BLEServer* s, esp_ble_gatts_cb_param_t* param) override {
     connected = true; wantStatus = true;
-    // faster connection interval for downloads (iOS accepts 15–30 ms)
-    s->updateConnParams(param->connect.remote_bda, 12, 24, 0, 400);
+    s->requestConnParams(param->connect.remote_bda, 12, 24, 0, 400);
   }
-  void onDisconnect(BLEServer* s) override {
-    connected = false; readPending = false;
-  }
+  void onDisconnect(BLEServer* s, esp_ble_gatts_cb_param_t* param) override { connected = false; readPending = false; }
+#endif
+  void onConnect(BLEServer* s) override { connected = true; wantStatus = true; }
+  void onDisconnect(BLEServer* s) override { connected = false; readPending = false; }
 };
 
 class CtrlCB : public BLECharacteristicCallbacks {
