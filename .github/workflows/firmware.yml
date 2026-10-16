@@ -1,0 +1,48 @@
+name: Build sensor firmware
+
+# Builds the M5StickS3 gait sensor firmware for free on GitHub and saves it as
+# sensors/firmware.bin, which the setup page (sensors/setup.html) puts onto the sticks.
+on:
+  push:
+    branches: [main]
+    paths: ["firmware/**", ".github/workflows/firmware.yml"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: arduino/setup-arduino-cli@v2
+
+      - name: Install ESP32 board support and libraries
+        run: |
+          arduino-cli config init --overwrite
+          arduino-cli config add board_manager.additional_urls https://espressif.github.io/arduino-esp32/package_esp32_index.json
+          arduino-cli core update-index
+          arduino-cli core install esp32:esp32
+          arduino-cli lib install M5Unified
+          arduino-cli core list
+          arduino-cli lib list
+
+      - name: Compile
+        run: |
+          arduino-cli compile \
+            --fqbn "esp32:esp32:esp32s3:CDCOnBoot=cdc,USBMode=hwcdc,FlashSize=8M,PSRAM=opi,PartitionScheme=default_8MB" \
+            --export-binaries --output-dir build firmware/sensor
+          ls -la build
+
+      - name: Save firmware to the site
+        run: |
+          mkdir -p sensors
+          cp build/sensor.ino.merged.bin sensors/firmware.bin
+          echo "{\"built\":\"$(date -u +%Y-%m-%dT%H:%MZ)\",\"commit\":\"${GITHUB_SHA::7}\"}" > sensors/firmware-info.json
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add sensors/firmware.bin sensors/firmware-info.json
+          git commit -m "Sensor firmware built from ${GITHUB_SHA::7}" || echo "No change"
+          git push
