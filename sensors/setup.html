@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="en-NZ">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Gait sensor setup · Palermo Racing Diary</title>
+<link rel="stylesheet" href="../styles.css">
+<script type="module" src="https://unpkg.com/esp-web-tools@10/dist/web/install-button.js?module"></script>
+<style>
+  main{max-width:720px;margin:0 auto;padding:16px;display:flex;flex-direction:column;gap:14px}
+  ol.steps{margin:0;padding-left:1.3em;display:flex;flex-direction:column;gap:8px}
+  .roles{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}
+  .roles div{border-radius:10px;padding:10px;color:#fff;font-weight:700;text-align:center}
+  esp-web-install-button button{font:inherit}
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <p class="small muted" style="margin:0"><a href="../">← Back to the diary</a></p>
+    <h1 style="margin:6px 0 4px">Set up the gait sensors</h1>
+    <p class="sub" style="margin:0">Do this once for each of the three M5StickS3 sticks. You need a Windows or Mac computer with <b>Chrome</b> or <b>Edge</b>, and a USB-C cable that carries data (not a charge-only cable).</p>
+  </header>
+
+  <div class="card">
+    <h3>1. Put the software on a stick</h3>
+    <ol class="steps">
+      <li>Plug the stick into the computer with the USB-C cable.</li>
+      <li>Click <b>Install</b> below. Pick the stick from the list (it's usually called <i>USB JTAG/serial debug unit</i>) and click <b>Connect</b>, then <b>Install</b>.</li>
+      <li>If the stick isn't in the list: hold the power button on its side for about 2 seconds until a green light flashes inside, then click Install again.</li>
+      <li>Wait about a minute. When it's done the stick restarts and shows <b>HEAD</b> on a blue screen.</li>
+    </ol>
+    <div style="margin-top:12px">
+      <esp-web-install-button manifest="manifest.json">
+        <button slot="activate" class="btn primary big" type="button">Install</button>
+        <span slot="unsupported" class="banner" style="display:block">This browser can't do this. Open this page in <b>Chrome</b> or <b>Edge</b> on a computer.</span>
+        <span slot="not-allowed" class="banner" style="display:block">This page needs to be opened over https.</span>
+      </esp-web-install-button>
+    </div>
+    <p class="small muted" id="fwInfo" style="margin:10px 0 0"></p>
+  </div>
+
+  <div class="card">
+    <h3>2. Choose what each stick is</h3>
+    <p style="margin:0 0 8px">Press the <b>front button</b> to change it. The stick restarts and shows the new name.</p>
+    <div class="roles">
+      <div style="background:#1f4ef8">HEAD<br><span class="small" style="font-weight:400">top of the head</span></div>
+      <div style="background:#2bd152">PELVIS<br><span class="small" style="font-weight:400">top of the croup</span></div>
+      <div style="background:#ff8c00">R FORE<br><span class="small" style="font-weight:400">right front pastern</span></div>
+    </div>
+    <p class="small" style="margin:8px 0 0">Make one of each, and put a strip of coloured tape on each stick so you can tell them apart.</p>
+    <ul class="plain small" style="margin:8px 0 0">
+      <li><b>Front button:</b> change HEAD / PELVIS / R FORE (not while recording).</li>
+      <li><b>Hold the front button 2 seconds:</b> turn off. To turn on, click the power button on the side once (double-click it also turns off).</li>
+      <li><b>The other small button:</b> dim or brighten the screen.</li>
+      <li>Charge with any USB-C phone charger. A full charge lasts a morning of checks.</li>
+    </ul>
+  </div>
+
+  <div class="card">
+    <h3>3. Using them</h3>
+    <p style="margin:0">On the iPhone, install the free <b>Bluefy</b> web browser from the App Store and open the diary in Bluefy (Safari can't talk to Bluetooth gadgets). Then go to <b>Gait → With the sensors</b>. The diary shows where to fit each stick.</p>
+  </div>
+</main>
+<script>
+  fetch("firmware-info.json", {cache:"no-store"}).then(r => r.ok ? r.json() : null).then(j => {
+    document.getElementById("fwInfo").textContent = j ? `Sensor software built ${new Date(j.built).toLocaleString("en-NZ")}.` : "The sensor software is still being built. Check back in a few minutes.";
+  }).catch(() => {});
+</script>
+</body>
+</html>
