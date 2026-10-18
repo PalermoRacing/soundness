@@ -639,6 +639,8 @@ function bindSensors(){
   $("sStart").onclick = startSensors;
   $("sStop").onclick = stopSensors;
   $("sPasteBtn").onclick = () => { const v = $("sPaste").value; if (v.trim()){ $("sPaste").value = ""; openImport(v); } };
+  $("sFileBtn").onclick = () => $("sFileIn").click();
+  $("sFileIn").onchange = async (e) => { const f = e.target.files[0]; e.target.value = ""; if (!f) return; try{ openImport(await f.text()); }catch(_){ alertBox("checkError", "Couldn't read that file."); } };
 }
 function stickLine(role){
   const s = S.sticks[role];
@@ -882,24 +884,46 @@ function enterOffline(){
   updateSensorBtns();
 }
 function showOfflineResult(P){
-  const link = location.origin + location.pathname + "#sensor=" + encodeSensor(P);
+  const full = location.origin + location.pathname + "#sensor=" + encodeSensor(P);
+  const small = location.origin + location.pathname + "#sensor=" + encodeSensor({ ...P, raw: null });
+  const stamp = (P.at || new Date().toISOString()).slice(0, 16).replace(/[T:]/g, "-");
   $("reportOut").innerHTML = `<div class="card" id="sendCard">
       <h2 style="margin:0">Now send it to the diary</h2>
       <ol class="small" style="margin:0;padding-left:1.2em;display:flex;flex-direction:column;gap:4px">
-        <li>Tap <b>Copy result</b>.</li>
-        <li>Open the diary in <b>Safari</b>, go to <b>Gait</b>, then <b>With the sensors</b>, and paste it into the <b>Got a result from Bluefy?</b> box. Tap <b>Open</b>.</li>
+        <li>Tap <b>Copy result</b> (or <b>Save as a file</b>).</li>
+        <li>Open the diary in <b>Safari</b>, go to <b>Gait</b>, then <b>With the sensors</b>. Paste into the <b>Got a result from Bluefy?</b> box and tap <b>Open</b> (or tap <b>Choose a result file</b>).</li>
         <li>Pick the horse and tap <b>Save</b>.</li>
       </ol>
       <button class="btn primary big" type="button" id="sendCopy">Copy result</button>
-      ${navigator.share ? `<button class="btn" type="button" id="sendShare">Share…</button>` : ""}
-      <textarea class="sendlink" id="sendLink" readonly>${esc(link.length > 4000 ? link.slice(0, 300) + "… (" + Math.round(link.length / 1000) + " KB, includes the raw sensor readings)" : link)}</textarea>
+      <div class="row">
+        <button class="btn" type="button" id="sendFile">Save as a file</button>
+        <button class="btn" type="button" id="sendSmall">Copy a short version</button>
+      </div>
+      <p class="small muted" style="margin:0" id="sendMsg">The short version leaves out the raw sensor readings. Use it only if the others won't work.</p>
+      <label class="small" for="sendLink">If nothing copies: tap in this box, choose <b>Select All</b>, then <b>Copy</b>.</label>
+      <textarea class="sendlink" id="sendLink" rows="3"></textarea>
       <p class="small muted" style="margin:0">Below is a preview. The final report is worked out for the horse you pick in Safari.</p>
     </div>` + reportHTML(buildSensorCheck(P, null));
-  $("sendCopy").onclick = async () => {
-    try{ await navigator.clipboard.writeText(link); $("sendCopy").textContent = "Copied. Now open Safari"; }
-    catch(_){ const t = $("sendLink"); t.value = link; t.focus(); t.select(); try{ document.execCommand("copy"); $("sendCopy").textContent = "Copied. Now open Safari"; }catch(__){ $("sendCopy").textContent = "Press and hold the text below to copy it"; } }
+  const box = $("sendLink"); box.value = full;
+  const say = (t) => { $("sendMsg").textContent = t; };
+  const copy = async (text, btn, label) => {
+    try{ await navigator.clipboard.writeText(text); btn.textContent = label; return; }catch(_){}
+    try{ box.value = text; box.focus(); box.setSelectionRange(0, text.length); if (document.execCommand("copy")){ btn.textContent = label; return; } }catch(_){}
+    say("This phone wouldn't let the diary copy it. Tap in the box below, choose Select All, then Copy. Or use Save as a file.");
   };
-  if ($("sendShare")) $("sendShare").onclick = () => navigator.share({ title: "Sensor check", url: link }).catch(() => {});
+  $("sendCopy").onclick = () => copy(full, $("sendCopy"), "Copied. Now open Safari");
+  $("sendSmall").onclick = () => copy(small, $("sendSmall"), "Short version copied");
+  $("sendFile").onclick = async () => {
+    const file = new File([full], `sensor-check-${stamp}.txt`, { type: "text/plain" });
+    try{
+      if (navigator.canShare?.({ files: [file] })){ await navigator.share({ files: [file], title: "Sensor check" }); say("Saved. In Safari, use Choose a result file and pick it (it's in the Files app if you saved it there)."); return; }
+    }catch(err){ if (err?.name === "AbortError") return; }
+    try{
+      const a = document.createElement("a"); a.href = URL.createObjectURL(file); a.download = file.name;
+      document.body.appendChild(a); a.click(); setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 4000);
+      say("If a download started, it's in the Files app under Downloads. In Safari, use Choose a result file and pick it.");
+    }catch(_){ say("This phone wouldn't save a file. Try Copy result, or the box below."); }
+  };
 }
 /* Safari: bring a Bluefy result in */
 function grabSensorHash(){
