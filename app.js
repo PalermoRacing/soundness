@@ -698,8 +698,9 @@ async function startSensors(){
     await Promise.all(SROLES.map(r => S.sticks[r].cmd("START")));
     S.sRecAt = Date.now();
     $("sStart").hidden = true; $("sStop").hidden = false;
+    if ($("sCue").checked) startDistanceCue();
     clearInterval(S.sTick);
-    S.sTick = setInterval(() => { const s = Math.round((Date.now() - S.sRecAt) / 1000); sStatus(`Recording… ${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}. Trot straight away, turn, and come back. Two or three times.`); }, 1000);
+    S.sTick = setInterval(() => { const s = Math.round((Date.now() - S.sRecAt) / 1000); sStatus(`Recording… ${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}. ${cueLine() || "Trot straight away, turn, and come back. Two or three times."}`); }, 1000);
     sStatus("Recording… trot the horse now.");
   }catch(err){
     alertBox("checkError", (err?.message || "Couldn't start the sensors.") + " Check all three are on and close by.");
@@ -708,7 +709,7 @@ async function startSensors(){
 }
 async function stopSensors(){
   const horse = S.horses.find(h => h.id === $("horseSel").value);
-  clearInterval(S.sTick);
+  clearInterval(S.sTick); stopDistanceCue();
   $("sStop").disabled = true;
   const recs = {};
   try{
@@ -748,6 +749,53 @@ async function stopSensors(){
     sStatus("");
     alertBox("checkError", (err?.message || "Something went wrong.") + " The recording is still on the sticks: tap Stop and check again to retry.");
   }finally{ $("sStop").disabled = false; renderSensorRows(); }
+}
+/* --- 30 m cue: the phone's location tells us when each straight run is long enough --- */
+const CUE_M = 30;
+function cueBeep(){
+  try{
+    const ctx = S.cueAudio; if (!ctx) return;
+    [0, 0.25].forEach(dt => { const o = ctx.createOscillator(), g = ctx.createGain(); o.frequency.value = 1000; o.connect(g); g.connect(ctx.destination);
+      const t = ctx.currentTime + dt; g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(0.6, t + 0.02); g.gain.exponentialRampToValueAtTime(0.0001, t + 0.18); o.start(t); o.stop(t + 0.2); });
+  }catch(_){}
+  try{ navigator.vibrate?.([200, 100, 200]); }catch(_){}
+}
+function cueSay(text){ try{ const u = new SpeechSynthesisUtterance(text); u.lang = "en-NZ"; u.rate = 1.05; speechSynthesis.cancel(); speechSynthesis.speak(u); }catch(_){} }
+function metresBetween(a, b){
+  const R = 6371000, r = Math.PI / 180, dLat = (b.lat - a.lat) * r, dLon = (b.lon - a.lon) * r;
+  const h = Math.sin(dLat / 2) ** 2 + Math.cos(a.lat * r) * Math.cos(b.lat * r) * Math.sin(dLon / 2) ** 2;
+  return 2 * R * Math.asin(Math.sqrt(h));
+}
+function startDistanceCue(){
+  stopDistanceCue();
+  // sound has to be switched on by a tap, which the Start button just was
+  try{ S.cueAudio = S.cueAudio || new (window.AudioContext || window.webkitAudioContext)(); S.cueAudio.resume?.(); }catch(_){}
+  try{ speechSynthesis.speak(new SpeechSynthesisUtterance(" ")); }catch(_){}
+  S.cue = { origin: null, d: 0, legs: 0, gps: "waiting", started: Date.now() };
+  if (!navigator.geolocation){ S.cue.gps = "none"; return; }
+  S.cueWatch = navigator.geolocation.watchPosition(pos => {
+    const c = S.cue; if (!c) return;
+    const p = { lat: pos.coords.latitude, lon: pos.coords.longitude, acc: pos.coords.accuracy };
+    if (p.acc > 20){ c.gps = "weak"; return; }   // too rough to measure 30 m
+    c.gps = "ok";
+    if (!c.origin){ c.origin = p; cueBeep(); cueSay("Go"); return; }
+    c.d = metresBetween(c.origin, p);
+    if (c.d >= CUE_M){
+      c.legs++; c.origin = p; c.d = 0; cueBeep();
+      cueSay(c.legs >= 6 ? "Thirty metres. That's plenty. Walk, then tap stop." : "Thirty metres. Walk the turn, then trot back.");
+    }
+  }, err => { if (S.cue) S.cue.gps = err.code === 1 ? "denied" : "none"; }, { enableHighAccuracy: true, maximumAge: 0, timeout: 15000 });
+}
+function stopDistanceCue(){
+  if (S.cueWatch != null){ try{ navigator.geolocation.clearWatch(S.cueWatch); }catch(_){} }
+  S.cueWatch = null; S.cue = null;
+}
+function cueLine(){
+  const c = S.cue; if (!c) return "";
+  if (c.gps === "denied") return "No location permission, so no 30 m beep. Count about 12 strides each way instead.";
+  if (c.gps === "none") return "The phone can't find its location, so no 30 m beep. Count about 12 strides each way.";
+  if (!c.origin) return c.gps === "weak" ? "Waiting for a better location fix (stand in the open)…" : "Finding location… start trotting after the beep.";
+  return `${Math.round(c.d)} m of ${CUE_M} m · ${c.legs} run${c.legs === 1 ? "" : "s"} done. Walk the turns.`;
 }
 /* --- a sensor result as a small package, so it can be done in Bluefy and saved from Safari --- */
 function sensorPayload(a, recs, gaitChoice){
