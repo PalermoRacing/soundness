@@ -1,0 +1,174 @@
+<!doctype html>
+<html lang="en-NZ">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="theme-color" content="#ffffff">
+<title>Heart Rate · Palermo Racing</title>
+<style>
+  :root{ --bg:#ffffff; --ink:#111418; --muted:#5b636d; --line:#d8dcd3; --accent:#a8203a; --ok:#1d7a3a; --warn:#b26b00; }
+  *{ box-sizing:border-box }
+  html,body{ margin:0; height:100%; background:var(--bg); color:var(--ink); font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif; -webkit-user-select:none; user-select:none }
+  body{ display:flex; flex-direction:column; min-height:100dvh; padding:max(10px, env(safe-area-inset-top)) 14px max(12px, env(safe-area-inset-bottom)) }
+  header{ display:flex; align-items:center; justify-content:space-between; gap:8px; min-height:44px }
+  .status{ font-size:15px; color:var(--muted); display:flex; align-items:center; gap:8px }
+  .dot{ width:12px; height:12px; border-radius:50%; background:#c9cdd2 }
+  .dot.on{ background:var(--ok) } .dot.wait{ background:var(--warn) }
+  button{ font:600 17px -apple-system,BlinkMacSystemFont,sans-serif; border-radius:10px; padding:12px 16px; border:1px solid var(--line); background:#fff; color:var(--ink); min-height:48px }
+  button.primary{ background:var(--accent); border-color:var(--accent); color:#fff }
+  main{ flex:1; display:grid; grid-template-rows:1fr 1fr auto; gap:6px; min-height:0 }
+  .big{ display:flex; flex-direction:column; align-items:center; justify-content:center; min-height:0; border-bottom:1px solid var(--line) }
+  .label{ font-size:20px; font-weight:700; letter-spacing:.08em; text-transform:uppercase; color:var(--muted) }
+  .num{ font-weight:800; line-height:.9; font-variant-numeric:tabular-nums; letter-spacing:-.03em; font-size:min(34vw, 30dvh) }
+  .unit{ font-size:22px; font-weight:700; color:var(--muted) }
+  .stale{ color:#b9bec4 }
+  .dur{ display:flex; align-items:center; justify-content:space-between; gap:10px; padding-top:6px }
+  .dur .t{ font-size:34px; font-weight:700; font-variant-numeric:tabular-nums }
+  .dur .btns{ display:flex; gap:8px }
+  .note{ font-size:15px; color:var(--muted); margin:6px 0 0; text-align:center }
+  .err{ color:var(--accent) }
+  @media (orientation: landscape){
+    main{ grid-template-columns:1fr 1fr; grid-template-rows:1fr auto }
+    .big{ border-bottom:none } .big + .big{ border-left:1px solid var(--line) }
+    .dur{ grid-column:1 / span 2 }
+    .num{ font-size:min(22vw, 50dvh) }
+  }
+</style>
+</head>
+<body>
+<header>
+  <div class="status"><span class="dot" id="dot"></span><span id="statusText">Not connected</span></div>
+  <button class="primary" id="connectBtn" type="button">Connect H10</button>
+</header>
+
+<main>
+  <section class="big" aria-label="Heart rate">
+    <div class="label">Heart rate</div>
+    <div class="num stale" id="hr">--</div>
+    <div class="unit">bpm</div>
+  </section>
+  <section class="big" aria-label="Speed">
+    <div class="label">Speed</div>
+    <div class="num stale" id="speed">--</div>
+    <div class="unit">km/h</div>
+  </section>
+  <section class="dur" aria-label="Duration">
+    <div class="t" id="dur">0:00</div>
+    <div class="btns">
+      <button class="primary" id="startBtn" type="button">Start</button>
+      <button id="resetBtn" type="button">Reset</button>
+    </div>
+  </section>
+</main>
+<p class="note" id="note"></p>
+
+<script>
+(() => {
+  "use strict";
+  const $ = (id) => document.getElementById(id);
+  const note = (t, err) => { $("note").textContent = t || ""; $("note").className = "note" + (err ? " err" : ""); };
+
+  /* ---------------- heart rate (Polar H10, standard Bluetooth heart rate) ---------------- */
+  let device = null, lastHr = 0, wantConnected = false;
+  function setStatus(text, state){ $("statusText").textContent = text; $("dot").className = "dot" + (state ? " " + state : ""); }
+  function onHr(e){
+    const v = e.target.value, flags = v.getUint8(0);
+    const bpm = (flags & 1) ? v.getUint16(1, true) : v.getUint8(1);
+    const contact = (flags & 0x06) === 0x06 || (flags & 0x04) === 0;   // bit 2 = contact supported, bit 1 = contact found
+    lastHr = Date.now();
+    $("hr").textContent = bpm > 0 ? bpm : "--";
+    $("hr").classList.toggle("stale", !(bpm > 0));
+    if (!contact) note("The strap isn't reading. Wet the electrodes and check it's snug against the skin.");
+    else if ($("note").textContent.startsWith("The strap")) note("");
+  }
+  async function attach(){
+    setStatus("Connecting…", "wait");
+    const server = await device.gatt.connect();
+    const svc = await server.getPrimaryService("heart_rate");
+    const ch = await svc.getCharacteristic("heart_rate_measurement");
+    ch.addEventListener("characteristicvaluechanged", onHr);
+    await ch.startNotifications();
+    setStatus(device.name || "Heart rate strap", "on");
+    $("connectBtn").textContent = "Disconnect";
+    $("connectBtn").classList.remove("primary");
+  }
+  async function reconnect(){
+    for (let i = 0; i < 20 && wantConnected; i++){
+      setStatus("Lost the strap. Reconnecting…", "wait");
+      try{ await attach(); return; }catch(_){ await new Promise(r => setTimeout(r, 1500)); }
+    }
+    if (wantConnected){ setStatus("Lost the strap", ""); note("Couldn't reconnect. Check the strap is on the horse and tap Connect.", true); resetConnectBtn(); wantConnected = false; }
+  }
+  function resetConnectBtn(){ $("connectBtn").textContent = "Connect H10"; $("connectBtn").classList.add("primary"); }
+  $("connectBtn").onclick = async () => {
+    if (wantConnected && device){ wantConnected = false; try{ device.gatt.disconnect(); }catch(_){} setStatus("Not connected", ""); resetConnectBtn(); return; }
+    if (!navigator.bluetooth){ note("This browser can't use Bluetooth. On iPhone, open this page in the free Bluefy app.", true); return; }
+    note("");
+    try{
+      device = await navigator.bluetooth.requestDevice({ filters: [{ services: ["heart_rate"] }] });
+      device.addEventListener("gattserverdisconnected", () => { $("hr").classList.add("stale"); if (wantConnected) reconnect(); });
+      wantConnected = true;
+      await attach();
+      keepAwake();
+    }catch(err){
+      if (err && err.name === "NotFoundError") return;   // chooser closed
+      setStatus("Not connected", ""); resetConnectBtn(); wantConnected = false;
+      note("Couldn't connect: " + (err && err.message || err) + ". Wet the strap and make sure it's on, so it wakes up.", true);
+    }
+  };
+  // grey the number out if no reading for 5 seconds
+  setInterval(() => { if (lastHr && Date.now() - lastHr > 5000) $("hr").classList.add("stale"); }, 1000);
+
+  /* ---------------- speed (phone GPS) ---------------- */
+  let lastFix = null, speeds = [], lastSpeedAt = 0;
+  function showSpeed(ms){
+    speeds.push({ t: Date.now(), v: ms }); speeds = speeds.filter(s => Date.now() - s.t < 3000);   // smooth over 3 s
+    const avg = speeds.reduce((a, s) => a + s.v, 0) / speeds.length;
+    const kmh = avg * 3.6;
+    $("speed").textContent = kmh < 1 ? "0" : kmh < 10 ? kmh.toFixed(1) : Math.round(kmh);
+    $("speed").classList.remove("stale"); lastSpeedAt = Date.now();
+  }
+  function startGps(){
+    if (!navigator.geolocation){ note("This phone can't give its location, so there's no speed.", true); return; }
+    navigator.geolocation.watchPosition(pos => {
+      const c = pos.coords, now = pos.timestamp || Date.now();
+      let v = (c.speed != null && c.speed >= 0) ? c.speed : null;
+      if (v == null && lastFix && c.accuracy < 25){
+        const dt = (now - lastFix.t) / 1000;
+        if (dt >= 1){ const R = 6371000, r = Math.PI / 180, dLat = (c.latitude - lastFix.lat) * r, dLon = (c.longitude - lastFix.lon) * r;
+          const h = Math.sin(dLat / 2) ** 2 + Math.cos(lastFix.lat * r) * Math.cos(c.latitude * r) * Math.sin(dLon / 2) ** 2;
+          v = 2 * R * Math.asin(Math.sqrt(h)) / dt; }
+      }
+      if (!lastFix || now - lastFix.t >= 1000) lastFix = { lat: c.latitude, lon: c.longitude, t: now };
+      if (v != null && c.accuracy < 30) showSpeed(v);
+      if (/location/.test($("note").textContent)) note("");
+    }, err => {
+      if (err.code === 1) note("Location is turned off for this page, so there's no speed. Allow location and reload.", true);
+      else if (!lastFix) note("Waiting for the phone's location (speed shows once it's found)…");
+    }, { enableHighAccuracy: true, maximumAge: 0, timeout: 20000 });
+  }
+  setInterval(() => { if (lastSpeedAt && Date.now() - lastSpeedAt > 6000) $("speed").classList.add("stale"); }, 1000);
+  startGps();
+
+  /* ---------------- duration ---------------- */
+  let runAt = null, banked = 0;
+  const fmt = (ms) => { const s = Math.floor(ms / 1000), h = Math.floor(s / 3600), m = Math.floor(s / 60) % 60, ss = s % 60;
+    return h ? `${h}:${String(m).padStart(2, "0")}:${String(ss).padStart(2, "0")}` : `${m}:${String(ss).padStart(2, "0")}`; };
+  setInterval(() => { $("dur").textContent = fmt(banked + (runAt ? Date.now() - runAt : 0)); }, 250);
+  $("startBtn").onclick = () => {
+    if (runAt){ banked += Date.now() - runAt; runAt = null; $("startBtn").textContent = "Start"; $("startBtn").classList.add("primary"); }
+    else { runAt = Date.now(); $("startBtn").textContent = "Pause"; $("startBtn").classList.remove("primary"); keepAwake(); }
+  };
+  $("resetBtn").onclick = () => { banked = 0; if (runAt) runAt = Date.now(); $("dur").textContent = "0:00"; };
+
+  /* ---------------- keep the screen on ---------------- */
+  let lock = null;
+  async function keepAwake(){ try{ if ("wakeLock" in navigator && !lock){ lock = await navigator.wakeLock.request("screen"); lock.addEventListener("release", () => { lock = null; }); } }catch(_){} }
+  document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible" && (wantConnected || runAt)) keepAwake(); });
+
+  if (!navigator.bluetooth) note("Open this page in the Bluefy app on iPhone (or Chrome on Android) to connect the H10.");
+})();
+</script>
+</body>
+</html>
