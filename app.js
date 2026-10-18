@@ -735,9 +735,9 @@ async function stopSensors(){
       try{ localStorage.setItem("lastSensorResult", encodeSensor(P)); }catch(_){}
       showOfflineResult(P);
     } else {
-      const check = buildSensorCheck(P, horse);
+      const check = buildSensorCheck(P, horse), cid = uid("c");
       $("reportOut").innerHTML = reportHTML(check);
-      try{ await save("checks", uid("c"), check); addSaved(`Saved to ${hShort(horse)}'s history.`); }
+      try{ await save("checks", cid, check); addSaved(`Saved to ${hShort(horse)}'s history.`); saveRaw(cid, check, P.raw).catch(() => {}); }
       catch(err){ addSaved(saveErrMsg(err)); }
     }
     $("notes").value = "";
@@ -755,7 +755,21 @@ function sensorPayload(a, recs, gaitChoice){
   return { v: 1, at: new Date().toISOString(), how: $("sHow").value, gait: gaitChoice || "", notes: $("notes").value.trim().slice(0, 500),
     n: { hm: n.headDiffMin, hx: n.headDiffMax, hsm: n.headSdMin, hsx: n.headSdMax, pm: n.pelvDiffMin, px: n.pelvDiffMax, psm: n.pelvSdMin, psx: n.pelvSdMax, hr: n.headRange, pr: n.pelvRange },
     s: a.strides, ts: a.totalStrides, tu: a.turning, st: +a.strideTime.toFixed(2), sec: Math.round(Math.min(...SROLES.map(r => recs[r].n)) / 100),
-    c: a.curves ? { h: a.curves.head.map(r1), p: a.curves.pelvis.map(r1) } : null };
+    c: a.curves ? { h: a.curves.head.map(r1), p: a.curves.pelvis.map(r1) } : null,
+    raw: rawPack(recs) };
+}
+// the raw sensor readings, kept so the analysis can be checked or improved later
+function b64FromBytes(u8){ let s = ""; for (let i = 0; i < u8.length; i += 0x8000) s += String.fromCharCode.apply(null, u8.subarray(i, i + 0x8000)); return btoa(s); }
+function rawPack(recs){
+  const out = {};
+  for (const r of SROLES){ const x = recs[r]; if (!x) continue;
+    out[r] = { n: x.n, t0: x.t0us, t1: x.t1us, off: +(x.offsetMs || 0).toFixed(2), d: b64FromBytes(new Uint8Array(x.raw.buffer, x.raw.byteOffset, x.n * 12)) }; }
+  return out;
+}
+async function saveRaw(checkId, check, raw){
+  if (!raw) return;
+  for (const r of SROLES){ const x = raw[r]; if (!x?.d) continue;
+    await save("sensorRaw", `${checkId}_${r}`, { checkId, role: r, horseId: check.horseId, horseName: check.horseName, createdAt: check.createdAt, gait: check.metrics?.gait || "", n: x.n, t0: x.t0, t1: x.t1, off: x.off, d: x.d }); }
 }
 function encodeSensor(P){
   const bytes = new TextEncoder().encode(JSON.stringify(P)); let bin = "";
@@ -775,7 +789,15 @@ function decodeSensor(text){
   return { v: 1, at: isNaN(Date.parse(P.at)) ? new Date().toISOString() : new Date(P.at).toISOString(),
     how: ["s_inhand","s_cart","s_lunge"].includes(P.how) ? P.how : "s_inhand", gait: ["trotter","pacer"].includes(P.gait) ? P.gait : "",
     notes: String(P.notes || "").slice(0, 500), n, s: Math.round(num(P.s)), ts: Math.round(num(P.ts)), tu: Math.round(num(P.tu)), st: num(P.st), sec: Math.round(num(P.sec)),
-    c: P.c ? { h: curve(P.c.h), p: curve(P.c.p) } : null };
+    c: P.c ? { h: curve(P.c.h), p: curve(P.c.p) } : null, raw: cleanRaw(P.raw) };
+}
+function cleanRaw(raw){
+  if (!raw || typeof raw !== "object") return null;
+  const out = {};
+  for (const r of SROLES){ const x = raw[r];
+    if (x && typeof x.d === "string" && /^[A-Za-z0-9+/=]+$/.test(x.d) && x.d.length < 950000)
+      out[r] = { n: Math.round(+x.n || 0), t0: +x.t0 || 0, t1: +x.t1 || 0, off: +x.off || 0, d: x.d }; }
+  return Object.keys(out).length ? out : null;
 }
 // turn the package into a saved check, reading it for this horse's gait
 function buildSensorCheck(P, horse){
@@ -817,17 +839,17 @@ function showOfflineResult(P){
       <h2 style="margin:0">Now send it to the diary</h2>
       <ol class="small" style="margin:0;padding-left:1.2em;display:flex;flex-direction:column;gap:4px">
         <li>Tap <b>Copy result</b>.</li>
-        <li>Open <b>Safari</b> and paste it into the address bar, then tap Go. (Or open the diary in Safari, go to Gait, With the sensors, and paste it in the box there.)</li>
+        <li>Open the diary in <b>Safari</b>, go to <b>Gait</b>, then <b>With the sensors</b>, and paste it into the <b>Got a result from Bluefy?</b> box. Tap <b>Open</b>.</li>
         <li>Pick the horse and tap <b>Save</b>.</li>
       </ol>
       <button class="btn primary big" type="button" id="sendCopy">Copy result</button>
       ${navigator.share ? `<button class="btn" type="button" id="sendShare">Share…</button>` : ""}
-      <textarea class="sendlink" id="sendLink" readonly>${esc(link)}</textarea>
+      <textarea class="sendlink" id="sendLink" readonly>${esc(link.length > 4000 ? link.slice(0, 300) + "… (" + Math.round(link.length / 1000) + " KB, includes the raw sensor readings)" : link)}</textarea>
       <p class="small muted" style="margin:0">Below is a preview. The final report is worked out for the horse you pick in Safari.</p>
     </div>` + reportHTML(buildSensorCheck(P, null));
   $("sendCopy").onclick = async () => {
     try{ await navigator.clipboard.writeText(link); $("sendCopy").textContent = "Copied. Now open Safari"; }
-    catch(_){ const t = $("sendLink"); t.focus(); t.select(); try{ document.execCommand("copy"); $("sendCopy").textContent = "Copied. Now open Safari"; }catch(__){ $("sendCopy").textContent = "Press and hold the text below to copy it"; } }
+    catch(_){ const t = $("sendLink"); t.value = link; t.focus(); t.select(); try{ document.execCommand("copy"); $("sendCopy").textContent = "Copied. Now open Safari"; }catch(__){ $("sendCopy").textContent = "Press and hold the text below to copy it"; } }
   };
   if ($("sendShare")) $("sendShare").onclick = () => navigator.share({ title: "Sensor check", url: link }).catch(() => {});
 }
@@ -868,10 +890,11 @@ function renderImport(){
   $("impCancel").onclick = () => { S.importP = null; S.importHorse = ""; $("reportOut").innerHTML = ""; };
   $("impSave").onclick = async () => {
     const h = S.horses.find(x => x.id === $("impHorse").value); if (!h) return;
-    const check = buildSensorCheck(P, h);
+    const check = buildSensorCheck(P, h), cid = uid("c");
     $("impSave").disabled = true;
     try{
-      await save("checks", uid("c"), check);
+      await save("checks", cid, check);
+      try{ await saveRaw(cid, check, P.raw); }catch(_){}
       S.importP = null; S.importHorse = "";
       $("reportOut").innerHTML = reportHTML(check); addSaved(`Saved to ${hShort(h)}'s history.`);
     }catch(err){ $("impSave").disabled = false; alertBox("checkError", saveErrMsg(err)); }
@@ -1236,7 +1259,7 @@ function reportHTML(c, opts={}){
     ${(r.footage.issues.length||r.refilm_tips.length)?`<div><h3 style="margin-bottom:8px">Better footage next time</h3><ul class="plain">${[...r.footage.issues,...r.refilm_tips].map(s=>`<li>${esc(s)}</li>`).join("")}</ul></div>`:""}
     ${c.notes?`<p class="note" style="margin:0">Your notes: ${esc(c.notes)}</p>`:""}
     ${c.thumbs?.length?`<div class="strip">${c.thumbs.map(u=>`<img src="${esc(u)}" alt="">`).join("")}</div>`:""}
-    <p class="disclaimer">${c.mode === "measure" ? "Measured with a free, general animal-tracking model. It is not a validated lameness system, and mild lameness can still be missed." : c.mode === "sensors" ? "Measured with three home-made motion sensors using the head-and-pelvis method vets use. It isn't a validated system: how firmly the sensors are fitted, the surface and how straight the horse goes all affect it." : "An AI opinion from phone footage, not a diagnosis."} If you're worried, call your vet.</p>
+    <p class="disclaimer">${c.mode === "measure" ? "Measured with a free, general animal-tracking model. It is not a validated lameness system, and mild lameness can still be missed." : c.mode === "sensors" ? "Trial version, still being checked against real horses: don't act on a sensor result on its own yet. Measured with three home-made motion sensors using the head-and-pelvis method vets use; how firmly the sensors are fitted, the surface and how straight the horse goes all affect it." : "An AI opinion from phone footage, not a diagnosis."} If you're worried, call your vet.</p>
     ${opts.deletable?`<div class="confirm" id="delWrap"><button class="link" type="button" data-del="${esc(c.id)}">Delete this check</button></div>`:""}
   </div>`;
 }
