@@ -31,7 +31,10 @@
     <div class="card signin">
       <h2>Sign in</h2>
       <p class="muted" style="margin:0">Use the Google account the stable has added to the team list.</p>
-      <div id="bluefyNote" class="banner" hidden>Google sign-in doesn't work inside the Bluefy app. Sign in below with your email and your diary password instead. No password yet? Open the diary in Safari, go to <b>Settings</b> and set one there first.</div>
+      <div id="bluefyNote" class="stackgap" hidden>
+        <div class="banner">You don't need to sign in here to use the sensors. Do the check in Bluefy, then copy the result into the diary in Safari, where you're signed in.</div>
+        <button class="btn primary big" id="offlineBtn" type="button">Do a sensor check</button>
+      </div>
       <button class="btn primary big" id="signInBtn" type="button">Sign in with Google</button>
       <details id="pwBox">
         <summary class="small">Sign in with email and password</summary>
@@ -149,7 +152,7 @@
 
   <!-- NEW CHECK -->
   <section class="panel" id="panel-check" hidden>
-    <div class="card">
+    <div class="card" id="checkHorseCard">
       <div class="step"><span class="n">1</span><h3>Which horse?</h3></div>
       <div class="row">
         <div class="field"><label for="horseSel">Horse</label><select id="horseSel"></select></div>
@@ -164,6 +167,11 @@
 
     <div class="card sonly">
       <div class="step"><span class="n">2</span><h3>Connect the sensors</h3></div>
+      <div id="sOffNote" class="banner" hidden>You're not signed in on this phone's Bluefy app, so the check won't be saved here. When it's finished, tap <b>Copy result</b> and paste it into the diary in Safari. <button class="link" type="button" id="sLastBtn" hidden>Copy the last result again</button></div>
+      <div id="sPasteBox" class="seg">
+        <label for="sPaste" class="small"><b>Got a result from Bluefy?</b> Paste it here</label>
+        <div class="row"><div class="field"><input id="sPaste" type="text" autocomplete="off" placeholder="Paste the copied result"></div><button class="btn" type="button" id="sPasteBtn">Open</button></div>
+      </div>
       <div id="sNoBt" class="banner" hidden>This browser can't connect to the sensors. On iPhone, install the free <b>Bluefy</b> browser from the App Store and open the diary in Bluefy. <button class="link" type="button" id="sCopyLink">Copy the diary's link</button></div>
       <div class="field"><label for="sHow">How the horse is moving</label>
         <select id="sHow"><option value="s_inhand">Trotted in hand, straight line (best)</option><option value="s_cart">Jogging in the cart, straight</option><option value="s_lunge">Lunging / in a circle</option></select></div>

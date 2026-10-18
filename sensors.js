@@ -388,5 +388,5 @@
         pelvDiffMin: +pMin.mean.toFixed(1), pelvDiffMax: +pMax.mean.toFixed(1), pelvSdMin: +pMin.sd.toFixed(1), pelvSdMax: +pMax.sd.toFixed(1), headRange: +head.range.toFixed(0), pelvRange: +pelv.range.toFixed(0) } };
   }
 
-  window.Sensors = { supported, connectOne, analyse, ROLE_LABEL, _test: { earthFrame, footStrikes, strideDisplacement, halves, filtfilt, biquad, interpret } };
+  window.Sensors = { supported, connectOne, analyse, interpret, ROLE_LABEL, _test: { earthFrame, footStrikes, strideDisplacement, halves, filtfilt, biquad, interpret } };
 })();

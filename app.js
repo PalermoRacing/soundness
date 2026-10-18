@@ -42,6 +42,8 @@ function boot(){
   S.auth = getAuth(app); S.fs = getFirestore(app);
   bindUI();
   getRedirectResult(S.auth).catch(err => showSigninErr(err));
+  grabSensorHash();
+  window.addEventListener("hashchange", () => { grabSensorHash(); maybeImport(); });
   onAuthStateChanged(S.auth, (user) => {
     S.unsubs.forEach(u => u()); S.unsubs = [];
     S.me = user;
@@ -115,6 +117,7 @@ function startData(){
   S.unsubs.push(onSnapshot(collection(S.fs,"horses"), snap => {
     S.horses = snap.docs.map(d => ({id:d.id, ...d.data()})).sort((a,b)=>String(hShort(a)).localeCompare(String(hShort(b))));
     renderHorseSelect(); renderHorses(); renderDiaryRecent(); renderHrRecent(); renderTempRecent(); renderSuppTotals();
+    maybeImport();
   }, denied));
   S.unsubs.push(onSnapshot(query(collection(S.fs,"checks"), orderBy("createdAt","desc"), limit(500)), snap => {
     S.checks = snap.docs.map(d => ({id:d.id, ...d.data()}));
@@ -184,7 +187,8 @@ function bindUI(){
   $("pwSignIn").onsubmit = pwSignIn;
   $("pwForgot").onclick = pwForgot;
   $("pwForm").onsubmit = pwSet;
-  if (IS_BLUEFY){ $("bluefyNote").hidden = false; $("pwBox").open = true; $("signInBtn").hidden = true; }
+  if (IS_BLUEFY){ $("bluefyNote").hidden = false; $("signInBtn").hidden = true; }
+  $("offlineBtn").onclick = enterOffline;
   $("signOutBtn").onclick = () => signOut(S.auth);
   $("settingsBtn").onclick = () => showTab("settings");
   $("settingsBack").onclick = () => showTab(S.prevTab);
@@ -634,6 +638,7 @@ function bindSensors(){
   $("sConnect").onclick = connectSensor;
   $("sStart").onclick = startSensors;
   $("sStop").onclick = stopSensors;
+  $("sPasteBtn").onclick = () => { const v = $("sPaste").value; if (v.trim()){ $("sPaste").value = ""; openImport(v); } };
 }
 function stickLine(role){
   const s = S.sticks[role];
@@ -661,7 +666,7 @@ function renderSensorRows(){
 }
 function updateSensorBtns(){
   if (!$("sStart")) return;
-  const ready = SROLES.every(r => S.sticks[r]?.connected) && $("horseSel").value;
+  const ready = SROLES.every(r => S.sticks[r]?.connected) && (S.offline || $("horseSel").value);
   $("sStart").disabled = !ready || !!S.sBusy;
 }
 function sStatus(text, p){
@@ -685,7 +690,7 @@ async function connectSensor(){
   renderSensorRows();
 }
 async function startSensors(){
-  const horse = S.horses.find(h => h.id === $("horseSel").value); if (!horse) return;
+  const horse = S.horses.find(h => h.id === $("horseSel").value); if (!horse && !S.offline) return;
   alertBox("checkError", ""); $("reportOut").innerHTML = "";
   S.sBusy = true; updateSensorBtns();
   try{
@@ -723,25 +728,18 @@ async function stopSensors(){
       recs[r] = await s.download((p) => sStatus(`Downloading the ${Sensors.ROLE_LABEL[r].toLowerCase()} sensor… ${Math.round(p * 100)}%`, p));
     }
     sStatus("Working out the strides…", null);
-    const gait = $("sGait").value || (horse?.gait === "trotter" ? "trotter" : "pacer");
-    const a = Sensors.analyse(recs, { gait });
-    const how = $("sHow").value;
-    const notes = [...a.notes];
-    if (how === "s_lunge") notes.unshift("This was on a circle. Horses move unevenly on a circle even when sound (usually the inside hip and head), so compare with a straight-line check before deciding anything.");
-    if (how === "s_cart") notes.unshift("In the cart the head is held by the reins and check, so the front-leg reading is less reliable than in hand.");
-    const next = a.verdict === "sound" ? ["Repeat after hard work, or whenever something doesn't feel right, so you have a record of this horse's normal."]
-      : a.verdict === "unclear" ? ["Trot in a straight line for longer (at least 30 m, two or three times) and check again."]
-      : ["Check the flagged leg: feel for heat and a digital pulse, hoof-test it and check the shoe.", "Run the sensor check again tomorrow to see if it's the same.", a.verdict === "lame" ? "A result marked Likely is worth a call to the vet." : "If it shows up again, or gets worse, call the vet."];
-    const result = normalise({ verdict: a.verdict, grade: null, confidence: a.confidence, gait_seen: gait === "trotter" ? "trot" : "pace", summary: a.summary, limbs: a.limbs,
-      observations: [], footage: { rating: a.strides >= 25 ? "good" : a.strides >= 12 ? "fair" : "poor", issues: [] }, next_steps: next, refilm_tips: [] });
-    const metrics = { ...a.numbers, strides: a.strides, totalStrides: a.totalStrides, turning: a.turning, strideTime: +a.strideTime.toFixed(2), gait, notes,
-      curves: a.curves ? { head: a.curves.head.map(v => +v.toFixed(1)), pelvis: a.curves.pelvis.map(v => +v.toFixed(1)) } : null,
-      seconds: Math.round(Math.min(...SROLES.map(r => recs[r].n)) / 100) };
-    const check = { horseId: horse.id, horseName: horse.name, horseGait: horse.gait, footage: how, pace: "jog", surface: "", lungeDir: "",
-      notes: $("notes").value.trim(), mode: "sensors", frameCount: a.strides, createdAt: new Date().toISOString(), result, metrics };
-    $("reportOut").innerHTML = reportHTML(check);
-    try{ await save("checks", uid("c"), check); addSaved(`Saved to ${hShort(horse)}'s history.`); }
-    catch(err){ addSaved(saveErrMsg(err)); }
+    const gaitChoice = $("sGait").value;
+    const a = Sensors.analyse(recs, { gait: gaitChoice || (horse?.gait === "trotter" ? "trotter" : "pacer") });
+    const P = sensorPayload(a, recs, gaitChoice);
+    if (S.offline){
+      try{ localStorage.setItem("lastSensorResult", encodeSensor(P)); }catch(_){}
+      showOfflineResult(P);
+    } else {
+      const check = buildSensorCheck(P, horse);
+      $("reportOut").innerHTML = reportHTML(check);
+      try{ await save("checks", uid("c"), check); addSaved(`Saved to ${hShort(horse)}'s history.`); }
+      catch(err){ addSaved(saveErrMsg(err)); }
+    }
     $("notes").value = "";
     sStatus("");
     $("reportOut").scrollIntoView({behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth", block:"start"});
@@ -750,6 +748,134 @@ async function stopSensors(){
     sStatus("");
     alertBox("checkError", (err?.message || "Something went wrong.") + " The recording is still on the sticks: tap Stop and check again to retry.");
   }finally{ $("sStop").disabled = false; renderSensorRows(); }
+}
+/* --- a sensor result as a small package, so it can be done in Bluefy and saved from Safari --- */
+function sensorPayload(a, recs, gaitChoice){
+  const n = a.numbers, r1 = (v) => Math.round(v * 10) / 10;
+  return { v: 1, at: new Date().toISOString(), how: $("sHow").value, gait: gaitChoice || "", notes: $("notes").value.trim().slice(0, 500),
+    n: { hm: n.headDiffMin, hx: n.headDiffMax, hsm: n.headSdMin, hsx: n.headSdMax, pm: n.pelvDiffMin, px: n.pelvDiffMax, psm: n.pelvSdMin, psx: n.pelvSdMax, hr: n.headRange, pr: n.pelvRange },
+    s: a.strides, ts: a.totalStrides, tu: a.turning, st: +a.strideTime.toFixed(2), sec: Math.round(Math.min(...SROLES.map(r => recs[r].n)) / 100),
+    c: a.curves ? { h: a.curves.head.map(r1), p: a.curves.pelvis.map(r1) } : null };
+}
+function encodeSensor(P){
+  const bytes = new TextEncoder().encode(JSON.stringify(P)); let bin = "";
+  bytes.forEach(b => bin += String.fromCharCode(b));
+  return btoa(bin).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}
+function decodeSensor(text){
+  let code = String(text || "").trim();
+  const i = code.indexOf("sensor="); if (i >= 0) code = code.slice(i + 7);
+  code = code.replace(/[^A-Za-z0-9_-]/g, "");
+  const bin = atob(code.replace(/-/g, "+").replace(/_/g, "/"));
+  const P = JSON.parse(new TextDecoder().decode(Uint8Array.from(bin, c => c.charCodeAt(0))));
+  const num = (v) => Number.isFinite(+v) ? +v : 0;
+  if (!P || P.v !== 1 || !P.n) throw new Error("bad");
+  const n = {}; for (const k of ["hm","hx","hsm","hsx","pm","px","psm","psx","hr","pr"]) n[k] = num(P.n[k]);
+  const curve = (c) => Array.isArray(c) ? c.slice(0, 100).map(v => Math.max(-500, Math.min(500, num(v)))) : null;
+  return { v: 1, at: isNaN(Date.parse(P.at)) ? new Date().toISOString() : new Date(P.at).toISOString(),
+    how: ["s_inhand","s_cart","s_lunge"].includes(P.how) ? P.how : "s_inhand", gait: ["trotter","pacer"].includes(P.gait) ? P.gait : "",
+    notes: String(P.notes || "").slice(0, 500), n, s: Math.round(num(P.s)), ts: Math.round(num(P.ts)), tu: Math.round(num(P.tu)), st: num(P.st), sec: Math.round(num(P.sec)),
+    c: P.c ? { h: curve(P.c.h), p: curve(P.c.p) } : null };
+}
+// turn the package into a saved check, reading it for this horse's gait
+function buildSensorCheck(P, horse){
+  const gait = P.gait || (horse?.gait === "trotter" ? "trotter" : "pacer"), n = P.n;
+  const head = { diffMin: { mean: n.hm, sd: n.hsm }, diffMax: { mean: n.hx, sd: n.hsx }, A: Math.hypot(n.hm, n.hx), range: n.hr };
+  const pelv = { diffMin: { mean: n.pm, sd: n.psm }, diffMax: { mean: n.px, sd: n.psx }, A: Math.hypot(n.pm, n.px), range: n.pr };
+  const a = Sensors.interpret(head, pelv, gait, P.s);
+  const notes = [...a.notes];
+  if (P.how === "s_lunge") notes.unshift("This was on a circle. Horses move unevenly on a circle even when sound (usually the inside hip and head), so compare with a straight-line check before deciding anything.");
+  if (P.how === "s_cart") notes.unshift("In the cart the head is held by the reins and check, so the front-leg reading is less reliable than in hand.");
+  const next = a.verdict === "sound" ? ["Repeat after hard work, or whenever something doesn't feel right, so you have a record of this horse's normal."]
+    : a.verdict === "unclear" ? ["Trot in a straight line for longer (at least 30 m, two or three times) and check again."]
+    : ["Check the flagged leg: feel for heat and a digital pulse, hoof-test it and check the shoe.", "Run the sensor check again tomorrow to see if it's the same.", a.verdict === "lame" ? "A result marked Likely is worth a call to the vet." : "If it shows up again, or gets worse, call the vet."];
+  const result = normalise({ verdict: a.verdict, grade: null, confidence: a.confidence, gait_seen: gait === "trotter" ? "trot" : "pace", summary: a.summary, limbs: a.limbs,
+    observations: [], footage: { rating: P.s >= 25 ? "good" : P.s >= 12 ? "fair" : "poor", issues: [] }, next_steps: next, refilm_tips: [] });
+  const metrics = { ...a.numbers, strides: P.s, totalStrides: P.ts, turning: P.tu, strideTime: P.st, gait, notes, seconds: P.sec,
+    curves: P.c?.h && P.c?.p ? { head: P.c.h, pelvis: P.c.p } : null };
+  return { horseId: horse?.id || "", horseName: horse?.name || "Not saved yet", horseGait: horse?.gait || "", footage: P.how, pace: "jog", surface: "", lungeDir: "",
+    notes: P.notes, mode: "sensors", frameCount: P.s, createdAt: P.at, result, metrics };
+}
+/* Bluefy: sensor check without signing in */
+function enterOffline(){
+  S.offline = true;
+  $("signinView").hidden = true; $("appView").hidden = false; $("who").hidden = true;
+  document.querySelector("nav.tabs").hidden = true;
+  $("panel-check").classList.add("offline");
+  showTab("check"); setCheckMode("sensors");
+  $("reportOut").innerHTML = "";
+  $("sOffNote").hidden = false; $("sPasteBox").hidden = true;
+  let last = null; try{ last = localStorage.getItem("lastSensorResult"); }catch(_){}
+  $("sLastBtn").hidden = !last;
+  $("sLastBtn").onclick = () => { try{ showOfflineResult(decodeSensor(localStorage.getItem("lastSensorResult"))); }catch(_){} };
+  $("sGait").options[0].textContent = "The horse's usual gait (picked when you save)";
+  updateSensorBtns();
+}
+function showOfflineResult(P){
+  const link = location.origin + location.pathname + "#sensor=" + encodeSensor(P);
+  $("reportOut").innerHTML = `<div class="card" id="sendCard">
+      <h2 style="margin:0">Now send it to the diary</h2>
+      <ol class="small" style="margin:0;padding-left:1.2em;display:flex;flex-direction:column;gap:4px">
+        <li>Tap <b>Copy result</b>.</li>
+        <li>Open <b>Safari</b> and paste it into the address bar, then tap Go. (Or open the diary in Safari, go to Gait, With the sensors, and paste it in the box there.)</li>
+        <li>Pick the horse and tap <b>Save</b>.</li>
+      </ol>
+      <button class="btn primary big" type="button" id="sendCopy">Copy result</button>
+      ${navigator.share ? `<button class="btn" type="button" id="sendShare">Share…</button>` : ""}
+      <textarea class="sendlink" id="sendLink" readonly>${esc(link)}</textarea>
+      <p class="small muted" style="margin:0">Below is a preview. The final report is worked out for the horse you pick in Safari.</p>
+    </div>` + reportHTML(buildSensorCheck(P, null));
+  $("sendCopy").onclick = async () => {
+    try{ await navigator.clipboard.writeText(link); $("sendCopy").textContent = "Copied. Now open Safari"; }
+    catch(_){ const t = $("sendLink"); t.focus(); t.select(); try{ document.execCommand("copy"); $("sendCopy").textContent = "Copied. Now open Safari"; }catch(__){ $("sendCopy").textContent = "Press and hold the text below to copy it"; } }
+  };
+  if ($("sendShare")) $("sendShare").onclick = () => navigator.share({ title: "Sensor check", url: link }).catch(() => {});
+}
+/* Safari: bring a Bluefy result in */
+function grabSensorHash(){
+  if (location.hash.startsWith("#sensor=")){
+    try{ sessionStorage.setItem("pendingSensor", location.hash.slice(1)); }catch(_){ S.pendingSensor = location.hash.slice(1); }
+    history.replaceState(null, "", location.pathname + location.search);
+  }
+}
+function maybeImport(){
+  let code = S.pendingSensor; try{ code = code || sessionStorage.getItem("pendingSensor"); }catch(_){}
+  if (code && S.me && S.horses.length) openImport(code);
+  else if (S.importP) renderImport();
+}
+function openImport(code){
+  try{ sessionStorage.removeItem("pendingSensor"); }catch(_){} S.pendingSensor = null;
+  try{ S.importP = decodeSensor(code); }
+  catch(_){ alertBox("checkError", "That doesn't look like a complete sensor result. Copy it again in Bluefy and paste the whole thing."); return; }
+  showTab("check"); setCheckMode("sensors");
+  renderImport();
+  $("reportOut").scrollIntoView({ block: "start" });
+}
+function renderImport(){
+  const P = S.importP; if (!P) return;
+  const sel = S.importHorse || "";
+  const horse = S.horses.find(h => h.id === sel) || null;
+  $("reportOut").innerHTML = `<div class="card" id="importCard">
+      <h2 style="margin:0">Sensor check from Bluefy</h2>
+      <p class="small muted" style="margin:0">Done ${esc(fmtDate(P.at))}. Pick the horse, then save it to their history.</p>
+      <div class="row">
+        <div class="field"><label for="impHorse">Horse</label><select id="impHorse"><option value="">Choose a horse…</option>${S.horses.map(h => `<option value="${esc(h.id)}"${h.id === sel ? " selected" : ""}>${esc(hName(h.id, h.name))}</option>`).join("")}</select></div>
+        <button class="btn primary" type="button" id="impSave"${horse ? "" : " disabled"}>Save</button>
+        <button class="link" type="button" id="impCancel">Discard</button>
+      </div>
+    </div>` + reportHTML(buildSensorCheck(P, horse));
+  $("impHorse").onchange = () => { S.importHorse = $("impHorse").value; renderImport(); };
+  $("impCancel").onclick = () => { S.importP = null; S.importHorse = ""; $("reportOut").innerHTML = ""; };
+  $("impSave").onclick = async () => {
+    const h = S.horses.find(x => x.id === $("impHorse").value); if (!h) return;
+    const check = buildSensorCheck(P, h);
+    $("impSave").disabled = true;
+    try{
+      await save("checks", uid("c"), check);
+      S.importP = null; S.importHorse = "";
+      $("reportOut").innerHTML = reportHTML(check); addSaved(`Saved to ${hShort(h)}'s history.`);
+    }catch(err){ $("impSave").disabled = false; alertBox("checkError", saveErrMsg(err)); }
+  };
 }
 function sensorMetricsHTML(m){
   if (!m) return "";
