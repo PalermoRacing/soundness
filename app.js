@@ -637,6 +637,7 @@ function bindSensors(){
   $("sCopyLink").onclick = async () => { try{ await navigator.clipboard.writeText(location.href.split("#")[0]); $("sCopyLink").textContent = "Copied"; }catch(_){ prompt("Copy this link into Bluefy:", location.href.split("#")[0]); } };
   $("sConnect").onclick = connectSensor;
   $("sStart").onclick = startSensors;
+  $("sGait").onchange = updateSensorBtns;
   $("sStop").onclick = stopSensors;
   $("sPasteBtn").onclick = () => { const v = $("sPaste").value; if (v.trim()){ $("sPaste").value = ""; openImport(v); } };
   $("sFileBtn").onclick = () => $("sFileIn").click();
@@ -668,7 +669,7 @@ function renderSensorRows(){
 }
 function updateSensorBtns(){
   if (!$("sStart")) return;
-  const ready = SROLES.every(r => S.sticks[r]?.connected) && (S.offline || $("horseSel").value);
+  const ready = SROLES.every(r => S.sticks[r]?.connected) && (S.offline || $("horseSel").value) && $("sGait").value;
   $("sStart").disabled = !ready || !!S.sBusy;
 }
 function sStatus(text, p){
@@ -880,7 +881,6 @@ function enterOffline(){
   let last = null; try{ last = localStorage.getItem("lastSensorResult"); }catch(_){}
   $("sLastBtn").hidden = !last;
   $("sLastBtn").onclick = () => { try{ showOfflineResult(decodeSensor(localStorage.getItem("lastSensorResult"))); }catch(_){} };
-  $("sGait").options[0].textContent = "The horse's usual gait (picked when you save)";
   updateSensorBtns();
 }
 function showOfflineResult(P){
