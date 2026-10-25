@@ -187,7 +187,7 @@ function saveErrMsg(err){
 function showTab(t){
   if (t === "settings"){ const cur = document.querySelector('nav.tabs [aria-selected="true"]'); S.prevTab = cur?.dataset.tab || "diary"; }
   document.querySelectorAll("nav.tabs button").forEach(b => b.setAttribute("aria-selected", String(b.dataset.tab===t)));
-  ["diary","temp","check","horses","mares","guide","settings"].forEach(p => $("panel-"+p).hidden = p!==t);
+  ["diary","temp","check","horses","mares","billing","guide","settings"].forEach(p => $("panel-"+p).hidden = p!==t);
   window.scrollTo(0,0);
 }
 function bindUI(){
@@ -1632,8 +1632,8 @@ function renderCareOverview(){
       ${ubills.some(b => b.r.billAmount != null) ? `<p class="small" style="margin:0">Extra charges not yet invoiced: <b class="mono">${money(ubills.reduce((a, b) => a + (b.r.billAmount || 0), 0))}</b></p>` : ""}` : `<p class="muted small" style="margin:0">Everything for this month is invoiced.</p>`}
   </div>`;
   $("invMonth").onchange = () => { S.invMonth = $("invMonth").value; renderCareOverview(); };
-  box.querySelectorAll("[data-openh]").forEach(b => b.onclick = () => { S.openHorse = b.dataset.openh; S.openCheck = null; renderHorses(); window.scrollTo(0,0); });
-  bindInvoice(box); bindDeletes(box, "inv"); bindBills(box);
+  box.querySelectorAll("[data-openh]").forEach(b => b.onclick = () => { S.openHorse = b.dataset.openh; S.openCheck = null; S.editHorse = false; showTab("horses"); renderHorses(); });
+  bindInvoice(box); bindDeletes(box, "inv", renderCareOverview); bindBills(box);
 }
 
 /* ================= supplements ================= */
@@ -1768,10 +1768,10 @@ function aiSummaryHTML(r){
 
 /* ================= horses ================= */
 function renderHorses(){
-  const box = $("horsesList"), top = [$("horsesTop"), $("hAddHorseSlot"), $("careOverview")];
+  const box = $("horsesList"), top = [$("horsesTop"), $("hAddHorseSlot")];
+  renderCareOverview();
   if (S.openHorse){ box.hidden = true; top.forEach(e=>e && (e.hidden=true)); renderHorseDetail(); return; }
   box.hidden = false; top.forEach(e=>e && (e.hidden=false)); $("horseDetail").hidden = true;
-  renderCareOverview();
   if (!S.horses.length){
     box.innerHTML = `<div class="card"><h3>No horses yet</h3><p class="muted" style="margin:0">Tap <b>+ Add horse</b> to start.</p></div>`;
     return;
@@ -2010,10 +2010,10 @@ function mountMareAdd(){
 }
 function renderMares(){
   const box = $("maresList"); if (!box) return;
-  const top = [$("maresTop"), $("mAddSlot"), $("mOverview")];
+  const top = [$("maresTop"), $("mAddSlot")];
+  renderMareOverview();
   if (S.openMare){ box.hidden = true; top.forEach(e => e && (e.hidden = true)); renderMareDetail(); return; }
   box.hidden = false; top.forEach(e => e && (e.hidden = false)); $("mareDetail").hidden = true;
-  renderMareOverview();
   if (!S.mares.length){ box.innerHTML = `<div class="card"><h3>No broodmares yet</h3><p class="muted" style="margin:0">Tap <b>+ Add mare</b> to start.</p></div>`; return; }
   const q = $("mareSearch").value.trim().toLowerCase();
   const list = [...S.mares].sort((a, b) => String(a.name).localeCompare(String(b.name)))
@@ -2042,7 +2042,10 @@ function renderMareOverview(){
   for (const r of un){ const o = mOwner(mareById(r.mareId)); if (!groups.has(o)) groups.set(o, []); groups.get(o).push(r); }
   const owners = [...groups.keys()].sort((a, b) => a === "No owner set" ? 1 : b === "No owner set" ? -1 : a.localeCompare(b));
   box.innerHTML = `<div class="card">
-    <div class="topline"><h3>Not yet invoiced</h3>
+    <h3>Feet &amp; worming due</h3>
+    ${due.length ? `<div class="history">${due.map(d => `<div class="hrrow"><div><b><button class="link" type="button" data-openm="${esc(d.m.id)}">${esc(d.m.name)}</button></b> · ${MCARE[d.cat].name} ${d.level === "overdue" ? `<span class="pill p-lame">Overdue</span>` : `<span class="pill p-possible">Due soon</span>`}</div><div class="small">Due ${esc(fmtDay(d.due))} · last ${MCARE[d.cat].verb} ${esc(fmtDay(d.last.date))}</div></div>`).join("")}</div>`
+      : `<p class="muted small" style="margin:0">Nothing due in the next week.</p>`}
+    <div class="topline" style="margin-top:6px"><h3>Not yet invoiced</h3>
       <select id="mInvMonth" style="width:auto">${[["all","All months"], ...months.map(m => [m, new Date(m + "-15").toLocaleDateString("en-NZ",{month:"long", year:"numeric"})])].map(([v, l]) => `<option value="${v}"${v === month ? " selected" : ""}>${esc(l)}</option>`).join("")}</select></div>
     ${owners.length ? owners.map((o, i) => { const rs = groups.get(o), tot = rs.reduce((a, r) => a + (r.amount || 0), 0);
       return `<div class="seg" style="margin-top:8px">
@@ -2051,12 +2054,9 @@ function renderMareOverview(){
         <div class="row confirm" data-ownerwrap="${i}"><button class="btn small" type="button" data-copyowner="${i}">Copy list</button><button class="btn small" type="button" data-allinv="${i}">Mark all invoiced</button></div>
       </div>`; }).join("")
       : `<p class="muted small" style="margin:0">Everything is invoiced${month === "all" ? "" : " for this month"}.</p>`}
-    <h3 style="margin-top:10px">Feet &amp; worming due</h3>
-    ${due.length ? `<div class="history">${due.map(d => `<div class="hrrow"><div><b><button class="link" type="button" data-openm="${esc(d.m.id)}">${esc(d.m.name)}</button></b> · ${MCARE[d.cat].name} ${d.level === "overdue" ? `<span class="pill p-lame">Overdue</span>` : `<span class="pill p-possible">Due soon</span>`}</div><div class="small">Due ${esc(fmtDay(d.due))} · last ${MCARE[d.cat].verb} ${esc(fmtDay(d.last.date))}</div></div>`).join("")}</div>`
-      : `<p class="muted small" style="margin:0">Nothing due in the next week.</p>`}
   </div>`;
   $("mInvMonth").onchange = () => { S.mInvMonth = $("mInvMonth").value; renderMareOverview(); };
-  box.querySelectorAll("[data-openm]").forEach(b => b.onclick = () => { S.openMare = b.dataset.openm; S.editMare = false; renderMares(); window.scrollTo(0,0); });
+  box.querySelectorAll("[data-openm]").forEach(b => b.onclick = () => { S.openMare = b.dataset.openm; S.editMare = false; showTab("mares"); renderMares(); });
   box.querySelectorAll("[data-copyowner]").forEach(b => b.onclick = async () => {
     const o = owners[+b.dataset.copyowner], rs = groups.get(o), tot = rs.reduce((a, r) => a + (r.amount || 0), 0);
     const txt = [o, ...rs.map(r => `${fmtDay(r.date)} – ${mareById(r.mareId)?.name || r.mareName} – ${mWhat(r)}${r.detail ? ": " + r.detail : ""}${r.amount != null ? " – " + money(r.amount) : ""}`), tot ? `Total ${money(tot)}` : ""].filter(Boolean).join("\n");

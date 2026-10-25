@@ -60,6 +60,7 @@
     <button role="tab" aria-selected="false" data-tab="check">Gait</button>
     <button role="tab" aria-selected="false" data-tab="horses">Horses</button>
     <button role="tab" aria-selected="false" data-tab="mares">Mares</button>
+    <button role="tab" aria-selected="false" data-tab="billing" class="tab2">Due &amp;<br>invoice</button>
   </nav>
 
   <div id="storeNote" class="banner" hidden></div>
@@ -313,7 +314,6 @@
       <button class="btn" id="hAddHorseBtn" type="button">+ Add horse</button>
     </div>
     <div id="hAddHorseSlot"></div>
-    <div id="careOverview"></div>
     <div id="horsesList"></div>
     <div id="horseDetail" hidden></div>
   </section>
@@ -325,9 +325,16 @@
       <button class="btn" id="mAddBtn" type="button">+ Add mare</button>
     </div>
     <div id="mAddSlot"></div>
-    <div id="mOverview"></div>
     <div id="maresList"></div>
     <div id="mareDetail" hidden></div>
+  </section>
+
+  <!-- DUE & INVOICE -->
+  <section class="panel" id="panel-billing" hidden>
+    <h2 style="margin:4px 0 0">Racehorses</h2>
+    <div id="careOverview"></div>
+    <h2 style="margin:12px 0 0">Broodmares</h2>
+    <div id="mOverview"></div>
   </section>
 
   <!-- GUIDE -->

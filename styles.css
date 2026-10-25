@@ -211,3 +211,9 @@ details.fold .fb{display:flex;flex-direction:column;gap:10px;margin-top:10px}
 .scurve .ax{stroke:var(--line);stroke-width:1}
 .scurve .stance{fill:var(--surface-2)}
 .scurve text{font:12px var(--body);fill:var(--muted)}
+
+nav.tabs button.tab2{white-space:normal;line-height:1.05;font-size:12px;padding-block:4px}
+@media (max-width:420px){ nav.tabs{gap:1px;padding:3px} nav.tabs button{font-size:13px;letter-spacing:.01em;padding-inline:3px} nav.tabs button.tab2{font-size:11px} }
+#mareDetail{display:flex;flex-direction:column;gap:16px}
+#panel-billing{display:flex;flex-direction:column;gap:12px}
+#panel-billing[hidden]{display:none}
