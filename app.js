@@ -31,7 +31,7 @@ const addDays = (str, n) => { const d = new Date(str + "T12:00:00"); d.setDate(d
 const fmtDay = (str) => { try { return new Date(str + "T12:00:00").toLocaleDateString("en-NZ", {weekday:"short", day:"numeric", month:"short", year:"numeric"}); } catch(_){ return str; } };
 
 const S = { fs:null, auth:null, me:null, horses:[], checks:[], hr:[], settings:{}, unsubs:[],
-  diary:[], trash:[], temps:[], starts:[], charges:[], care:[], supps:[], diaryMode:"work", invMonth:null, showAllDiary:false, editHorse:false,
+  diary:[], trash:[], temps:[], starts:[], charges:[], care:[], supps:[], mares:[], mareRecs:[], openMare:null, editMare:false, mInvMonth:null, diaryMode:"work", invMonth:null, showAllDiary:false, editHorse:false,
   file:null, segStart:0, ctl:null, openHorse:null, openCheck:null, prevTab:"diary" };
 
 /* ================= boot & auth ================= */
@@ -143,6 +143,14 @@ function startData(){
     S.care = snap.docs.map(d => ({id:d.id, ...d.data()}));
     renderDiaryRecent(); renderHorses();
   }, denied));
+  S.unsubs.push(onSnapshot(collection(S.fs,"mares"), snap => {
+    S.mares = snap.docs.map(d => ({id:d.id, ...d.data()}));
+    renderMares();
+  }, denied));
+  S.unsubs.push(onSnapshot(query(collection(S.fs,"mareRecs"), orderBy("date","desc"), limit(3000)), snap => {
+    S.mareRecs = snap.docs.map(d => ({id:d.id, ...d.data()})).sort((a,b) => (b.date||"").localeCompare(a.date||"") || (b.createdAt||"").localeCompare(a.createdAt||""));
+    renderMares();
+  }, denied));
   S.unsubs.push(onSnapshot(query(collection(S.fs,"trash"), orderBy("deletedAt","desc"), limit(500)), snap => {
     S.trash = snap.docs.map(d => ({id:d.id, ...d.data()}));
     purgeOldTrash(); renderTrash();
@@ -179,7 +187,7 @@ function saveErrMsg(err){
 function showTab(t){
   if (t === "settings"){ const cur = document.querySelector('nav.tabs [aria-selected="true"]'); S.prevTab = cur?.dataset.tab || "diary"; }
   document.querySelectorAll("nav.tabs button").forEach(b => b.setAttribute("aria-selected", String(b.dataset.tab===t)));
-  ["diary","temp","check","horses","guide","settings"].forEach(p => $("panel-"+p).hidden = p!==t);
+  ["diary","temp","check","horses","mares","guide","settings"].forEach(p => $("panel-"+p).hidden = p!==t);
   window.scrollTo(0,0);
 }
 function bindUI(){
@@ -196,6 +204,7 @@ function bindUI(){
   $("guideBack").onclick = () => showTab("check");
   document.querySelectorAll("nav.tabs button").forEach(b => b.onclick = () => showTab(b.dataset.tab));
   mountAddForm("add", "addHorseBtn", "addHorseSlot", "horseSel");
+  mountMareAdd();
   mountAddForm("hha", "hAddHorseBtn", "hAddHorseSlot", null);
   mountAddForm("dad", "dAddHorseBtn", "dAddHorseSlot", "dHorse");
   mountAddForm("tad", "tAddHorseBtn", "tAddHorseSlot", "tHorse");
@@ -394,7 +403,7 @@ function bindDeletes(root, key, after){
 
 /* ================= recently deleted (30-day bin) ================= */
 const TRASH_DAYS = 30;
-const COLS = { diary: () => S.diary, hr: () => S.hr, temps: () => S.temps, starts: () => S.starts, charges: () => S.charges, care: () => S.care, checks: () => S.checks, horses: () => S.horses };
+const COLS = { diary: () => S.diary, hr: () => S.hr, temps: () => S.temps, starts: () => S.starts, charges: () => S.charges, care: () => S.care, checks: () => S.checks, horses: () => S.horses, mares: () => S.mares, mareRecs: () => S.mareRecs };
 function findRec(col, id){ return (COLS[col]?.() || []).find(r => r.id === id); }
 function describeRec(col, r){
   if (!r) return "Entry";
@@ -408,6 +417,8 @@ function describeRec(col, r){
     care: () => [CARE[r.kind]?.name || "Shoeing", nm, fmtDay(r.date)],
     checks: () => ["Gait check", nm, fmtDate(r.createdAt)],
     horses: () => [hShort(r)],
+    mares: () => [r.name],
+    mareRecs: () => [`${mWhat(r)}${r.amount != null ? " " + money(r.amount) : ""}`, mareById(r.mareId)?.name || r.mareName, fmtDay(r.date)],
   }[col];
   return bits ? bits().filter(Boolean).join(" · ") : "Entry";
 }
@@ -1931,6 +1942,253 @@ function renderHorseDetail(){
       S.openHorse = null; S.editHorse = false; renderHorses();
     }catch(err){ alertBox("storeNote", saveErrMsg(err)); }
   });
+}
+
+/* ================= broodmares (own tab; kept apart from the racing team) ================= */
+// mares/{id}: { name, owner, notes, createdAt }
+// mareRecs/{id}: { mareId, mareName, cat:"charge"|"feet"|"worm", kind, date, nextDue, detail, amount|null, invoiced, invoicedAt, createdAt }
+const MCHARGE = {vet:"Vet", scan:"Scan", serve:"Serving / AI fee", foaling:"Foaling", dentist:"Dentist", medication:"Medication", transport:"Float / transport", grazing:"Grazing / agistment", other:"Other"};
+const MCARE = { feet: { name: "Feet / farrier", verb: "done", weeks: 6 }, worm: { name: "Worming", verb: "wormed", weeks: 12 } };
+const MFEET = {trim:"Trim", full:"Full set", fronts:"Fronts only", hinds:"Hinds only", reset:"Reset", remove:"Shoes off"};
+const mareById = (id) => S.mares.find(m => m.id === id);
+const mOwner = (m) => (m && m.owner && m.owner.trim()) || "No owner set";
+const mWhat = (r) => r.cat === "charge" ? (MCHARGE[r.kind] || "Charge") : MCARE[r.cat]?.name || "Entry";
+const mRecs = (mareId, cat) => S.mareRecs.filter(r => (!mareId || r.mareId === mareId) && (!cat || r.cat === cat));
+function mCareStatus(mareId, cat){
+  const last = mRecs(mareId, cat)[0]; if (!last) return null;
+  const t = todayStr(), due = last.nextDue || addDays(last.date, MCARE[cat].weeks * 7);
+  return { last, due, level: due < t ? "overdue" : due <= addDays(t, 7) ? "soon" : "ok" };
+}
+function readAmount(v){
+  const av = String(v || "").trim().replace("$", "").replace(",", ".");
+  if (av === "") return null;
+  const n = Math.round(parseFloat(av) * 100) / 100;
+  return isNaN(n) || n < 0 ? false : n;
+}
+function mRecRow(r, showMare, key){
+  return `<div class="hrrow">
+    <div><span class="d mono">${esc(fmtDay(r.date))}</span>${showMare ? ` · <b>${esc(mareById(r.mareId)?.name || r.mareName || "")}</b>` : ""} <span class="pill p-unclear">${esc(mWhat(r))}</span>
+      ${r.amount != null ? ` <b class="mono">${money(r.amount)}</b>` : ""}
+      ${r.invoiced ? `<span class="pill p-sound">Invoiced</span>` : `<span class="pill p-possible">Not invoiced</span>`}</div>
+    ${r.detail ? `<div class="small">${esc(r.detail)}</div>` : ""}
+    ${r.cat !== "charge" && r.nextDue ? `<div class="small muted">Next due ${esc(fmtDay(r.nextDue))}</div>` : ""}
+    <div class="confirm" data-delwrap="${esc(key)}_mareRecs_${esc(r.id)}">
+      <button class="link small" type="button" data-inv="${esc(r.id)}" data-invcol="mareRecs" data-invval="${r.invoiced ? "0" : "1"}">${r.invoiced ? "Mark not invoiced" : "Mark invoiced"}</button>
+      <button class="link small" type="button" data-delcol="mareRecs" data-delid="${esc(r.id)}" data-delkey="${esc(key)}">Delete</button>
+    </div>
+  </div>`;
+}
+function mareDue(){
+  const out = [];
+  for (const m of S.mares) for (const cat of ["feet", "worm"]){
+    const st = mCareStatus(m.id, cat); if (st && st.level !== "ok") out.push({ m, cat, ...st });
+  }
+  return out.sort((a, b) => a.due.localeCompare(b.due));
+}
+function mountMareAdd(){
+  $("mAddSlot").innerHTML = `<form class="seg" id="mAddForm" hidden>
+    <div class="row">
+      <div class="field"><label for="mAddName">Mare's name</label><input id="mAddName" type="text" required placeholder="e.g. In Hollywood"></div>
+      <div class="field"><label for="mAddOwner">Owner (who to invoice)</label><input id="mAddOwner" type="text" placeholder="e.g. John &amp; Mary Smith"></div>
+    </div>
+    <div class="field"><label for="mAddNotes">Notes (optional)</label><input id="mAddNotes" type="text" placeholder="Age, in foal to…, due date, phone…"></div>
+    <div class="row"><button class="btn primary" type="submit">Save mare</button><button class="btn" type="button" id="mAddCancel">Cancel</button></div>
+    <div class="small" id="mAddMsg" hidden></div>
+  </form>`;
+  const f = $("mAddForm");
+  $("mAddBtn").onclick = () => { f.hidden = false; $("mAddName").focus(); };
+  $("mAddCancel").onclick = () => { f.hidden = true; };
+  f.onsubmit = async (e) => {
+    e.preventDefault();
+    const name = $("mAddName").value.trim(); if (!name) return;
+    if (S.mares.some(m => String(m.name).toLowerCase() === name.toLowerCase())){ msg("mAddMsg", `${name} is already in the list.`, false); return; }
+    try{ await save("mares", uid("m"), { name, owner: $("mAddOwner").value.trim(), notes: $("mAddNotes").value.trim(), createdAt: new Date().toISOString() }); }
+    catch(err){ msg("mAddMsg", saveErrMsg(err), false); return; }
+    f.reset(); f.hidden = true; msg("mAddMsg", "", true);
+  };
+  $("mareSearch").oninput = () => renderMares();
+}
+function renderMares(){
+  const box = $("maresList"); if (!box) return;
+  const top = [$("maresTop"), $("mAddSlot"), $("mOverview")];
+  if (S.openMare){ box.hidden = true; top.forEach(e => e && (e.hidden = true)); renderMareDetail(); return; }
+  box.hidden = false; top.forEach(e => e && (e.hidden = false)); $("mareDetail").hidden = true;
+  renderMareOverview();
+  if (!S.mares.length){ box.innerHTML = `<div class="card"><h3>No broodmares yet</h3><p class="muted" style="margin:0">Tap <b>+ Add mare</b> to start.</p></div>`; return; }
+  const q = $("mareSearch").value.trim().toLowerCase();
+  const list = [...S.mares].sort((a, b) => String(a.name).localeCompare(String(b.name)))
+    .filter(m => !q || String(m.name || "").toLowerCase().includes(q) || String(m.owner || "").toLowerCase().includes(q));
+  if (!list.length){ box.innerHTML = `<p class="muted">No mare or owner matches “${esc(q)}”.</p>`; return; }
+  box.innerHTML = `<div class="horse-list">${list.map(m => {
+    const un = mRecs(m.id).filter(r => !r.invoiced), owed = un.reduce((a, r) => a + (r.amount || 0), 0);
+    const feet = mCareStatus(m.id, "feet"), worm = mCareStatus(m.id, "worm");
+    const pills = [un.length ? `<span class="pill p-possible">${un.length} not invoiced${owed ? " · " + money(owed) : ""}</span>` : "",
+      feet?.level === "overdue" ? `<span class="pill p-lame">Feet overdue</span>` : feet?.level === "soon" ? `<span class="pill p-possible">Feet due</span>` : "",
+      worm?.level === "overdue" ? `<span class="pill p-lame">Worming overdue</span>` : worm?.level === "soon" ? `<span class="pill p-possible">Worming due</span>` : ""].filter(Boolean).join(" ");
+    return `<button class="horse" type="button" data-mare="${esc(m.id)}">
+      <span class="nm">${esc(m.name)}</span><span></span>
+      <span class="sm">Owner: ${esc(mOwner(m))}</span>
+      <span>${pills}</span>
+    </button>`; }).join("")}</div>`;
+  box.querySelectorAll("[data-mare]").forEach(b => b.onclick = () => { S.openMare = b.dataset.mare; S.editMare = false; renderMares(); window.scrollTo(0,0); });
+}
+function renderMareOverview(){
+  const box = $("mOverview"); if (!box) return;
+  const due = mareDue(), month = S.mInvMonth || "all";
+  const all = mRecs();
+  const months = [...new Set(all.map(r => (r.date || "").slice(0,7)).filter(Boolean))].sort().reverse();
+  const un = all.filter(r => !r.invoiced && (month === "all" || (r.date || "").slice(0,7) === month)).sort((a, b) => (a.date||"").localeCompare(b.date||""));
+  const groups = new Map();
+  for (const r of un){ const o = mOwner(mareById(r.mareId)); if (!groups.has(o)) groups.set(o, []); groups.get(o).push(r); }
+  const owners = [...groups.keys()].sort((a, b) => a === "No owner set" ? 1 : b === "No owner set" ? -1 : a.localeCompare(b));
+  box.innerHTML = `<div class="card">
+    <div class="topline"><h3>Not yet invoiced</h3>
+      <select id="mInvMonth" style="width:auto">${[["all","All months"], ...months.map(m => [m, new Date(m + "-15").toLocaleDateString("en-NZ",{month:"long", year:"numeric"})])].map(([v, l]) => `<option value="${v}"${v === month ? " selected" : ""}>${esc(l)}</option>`).join("")}</select></div>
+    ${owners.length ? owners.map((o, i) => { const rs = groups.get(o), tot = rs.reduce((a, r) => a + (r.amount || 0), 0);
+      return `<div class="seg" style="margin-top:8px">
+        <div class="topline"><b>${esc(o)}</b><span class="mono">${tot ? money(tot) : ""}</span></div>
+        <div class="history">${rs.map(r => mRecRow(r, true, "mi")).join("")}</div>
+        <div class="row confirm" data-ownerwrap="${i}"><button class="btn small" type="button" data-copyowner="${i}">Copy list</button><button class="btn small" type="button" data-allinv="${i}">Mark all invoiced</button></div>
+      </div>`; }).join("")
+      : `<p class="muted small" style="margin:0">Everything is invoiced${month === "all" ? "" : " for this month"}.</p>`}
+    <h3 style="margin-top:10px">Feet &amp; worming due</h3>
+    ${due.length ? `<div class="history">${due.map(d => `<div class="hrrow"><div><b><button class="link" type="button" data-openm="${esc(d.m.id)}">${esc(d.m.name)}</button></b> · ${MCARE[d.cat].name} ${d.level === "overdue" ? `<span class="pill p-lame">Overdue</span>` : `<span class="pill p-possible">Due soon</span>`}</div><div class="small">Due ${esc(fmtDay(d.due))} · last ${MCARE[d.cat].verb} ${esc(fmtDay(d.last.date))}</div></div>`).join("")}</div>`
+      : `<p class="muted small" style="margin:0">Nothing due in the next week.</p>`}
+  </div>`;
+  $("mInvMonth").onchange = () => { S.mInvMonth = $("mInvMonth").value; renderMareOverview(); };
+  box.querySelectorAll("[data-openm]").forEach(b => b.onclick = () => { S.openMare = b.dataset.openm; S.editMare = false; renderMares(); window.scrollTo(0,0); });
+  box.querySelectorAll("[data-copyowner]").forEach(b => b.onclick = async () => {
+    const o = owners[+b.dataset.copyowner], rs = groups.get(o), tot = rs.reduce((a, r) => a + (r.amount || 0), 0);
+    const txt = [o, ...rs.map(r => `${fmtDay(r.date)} – ${mareById(r.mareId)?.name || r.mareName} – ${mWhat(r)}${r.detail ? ": " + r.detail : ""}${r.amount != null ? " – " + money(r.amount) : ""}`), tot ? `Total ${money(tot)}` : ""].filter(Boolean).join("\n");
+    try{ await navigator.clipboard.writeText(txt); b.textContent = "Copied"; }catch(_){ b.textContent = "Couldn't copy"; }
+    setTimeout(() => { b.textContent = "Copy list"; }, 2000);
+  });
+  box.querySelectorAll("[data-allinv]").forEach(b => b.onclick = () => {
+    const o = owners[+b.dataset.allinv], rs = groups.get(o), wrap = box.querySelector(`[data-ownerwrap="${b.dataset.allinv}"]`);
+    wrap.innerHTML = `<span>Mark all ${rs.length} for ${esc(o)} as invoiced?</span><button class="btn primary small" type="button">Yes</button><button class="btn small" type="button">Cancel</button>`;
+    const [y, n] = wrap.querySelectorAll("button");
+    n.onclick = () => renderMareOverview();
+    y.onclick = async () => { y.disabled = true; const at = new Date().toISOString();
+      try{ for (const r of rs) await patch("mareRecs", r.id, { invoiced: true, invoicedAt: at }); }catch(err){ alertBox("storeNote", saveErrMsg(err)); } };
+  });
+  bindInvoice(box); bindDeletes(box, "mi", renderMareOverview);
+}
+function mCareCard(cat, m){
+  const st = mCareStatus(m.id, cat), recs = mRecs(m.id, cat), t = todayStr();
+  const pill = !st ? "" : st.level === "overdue" ? `<span class="pill p-lame">Overdue</span>` : st.level === "soon" ? `<span class="pill p-possible">Due soon</span>` : `<span class="pill p-sound">Up to date</span>`;
+  return `<div class="card"><div class="topline"><h3>${MCARE[cat].name} ${pill}</h3><button class="link" type="button" id="mcAdd_${cat}">+ Record ${cat === "feet" ? "feet" : "worming"}</button></div>
+    <form class="seg" id="mcf_${cat}" hidden>
+      <div class="row">
+        <div class="field"><label for="mcDate_${cat}">Date ${MCARE[cat].verb}</label><input id="mcDate_${cat}" type="date" required value="${t}"></div>
+        <div class="field"><label for="mcDue_${cat}">Next due</label><input id="mcDue_${cat}" type="date" value="${addDays(t, MCARE[cat].weeks * 7)}"></div>
+      </div>
+      <div class="row">
+        ${cat === "feet" ? `<div class="field"><label for="mcWork_feet">Work done</label><select id="mcWork_feet">${Object.entries(MFEET).map(([k, v]) => `<option value="${k}">${v}</option>`).join("")}</select></div>
+          <div class="field"><label for="mcDetail_feet">Farrier (optional)</label><input id="mcDetail_feet" type="text" placeholder="e.g. Dave"></div>`
+        : `<div class="field"><label for="mcDetail_worm">Wormer used (optional)</label><input id="mcDetail_worm" type="text" placeholder="e.g. Equest Plus Tape"></div>`}
+        <div class="field"><label for="mcAmt_${cat}">Amount to charge ($, optional)</label><input id="mcAmt_${cat}" type="text" inputmode="decimal" placeholder="e.g. 45.00"></div>
+      </div>
+      <label class="small" style="display:flex;gap:8px;align-items:center;font-weight:400"><input type="checkbox" id="mcInv_${cat}"> Already invoiced</label>
+      <div class="row"><button class="btn primary" type="submit">Save</button><button class="btn" type="button" id="mcCancel_${cat}">Cancel</button></div>
+      <div class="small" id="mcMsg_${cat}" hidden></div>
+    </form>
+    ${st ? `<div class="kv"><dt>Last ${MCARE[cat].verb}</dt><dd>${esc(fmtDay(st.last.date))}</dd><dt>Next due</dt><dd>${esc(fmtDay(st.due))}</dd></div>
+      <details><summary class="small">History (${recs.length})</summary><div class="history" style="margin-top:8px">${recs.map(r => mRecRow(r, false, "mc")).join("")}</div></details>`
+      : `<p class="muted small" style="margin:0">Nothing recorded yet.</p>`}
+  </div>`;
+}
+function bindMCare(cat, m){
+  const f = $("mcf_" + cat);
+  $("mcAdd_" + cat).onclick = () => { f.hidden = !f.hidden; };
+  $("mcCancel_" + cat).onclick = () => { f.hidden = true; };
+  $("mcDate_" + cat).onchange = () => { $("mcDue_" + cat).value = addDays($("mcDate_" + cat).value || todayStr(), MCARE[cat].weeks * 7); };
+  f.onsubmit = async (e) => {
+    e.preventDefault();
+    const amount = readAmount($("mcAmt_" + cat).value);
+    if (amount === false){ msg("mcMsg_" + cat, "Enter the amount as a number, e.g. 45.00", false); return; }
+    const detail = cat === "feet" ? [MFEET[$("mcWork_feet").value], $("mcDetail_feet").value.trim()].filter(Boolean).join(" · ") : $("mcDetail_worm").value.trim();
+    const inv = $("mcInv_" + cat).checked;
+    const rec = { mareId: m.id, mareName: m.name, cat, kind: cat, date: $("mcDate_" + cat).value || todayStr(), nextDue: $("mcDue_" + cat).value || "", detail, amount,
+      invoiced: inv, invoicedAt: inv ? new Date().toISOString() : "", createdAt: new Date().toISOString() };
+    try{ await save("mareRecs", uid("r"), rec); }catch(err){ msg("mcMsg_" + cat, saveErrMsg(err), false); }
+  };
+}
+function renderMareDetail(){
+  const d = $("mareDetail"); d.hidden = false;
+  const m = mareById(S.openMare);
+  if (!m){ S.openMare = null; renderMares(); return; }
+  const hx = mRecs(m.id, "charge"), owed = mRecs(m.id).filter(r => !r.invoiced).reduce((a, r) => a + (r.amount || 0), 0);
+  const t = todayStr();
+  d.innerHTML = `<button class="link" type="button" id="mBack">← All mares</button>
+    <div class="card">
+      <div><span class="eyebrow">Broodmare</span><h2>${esc(m.name)}</h2>
+        <p class="small" style="margin:4px 0 0">Owner: <b>${esc(mOwner(m))}</b></p>
+        ${m.notes ? `<p class="muted small" style="margin:4px 0 0">${esc(m.notes)}</p>` : ""}</div>
+      <div class="row">
+        <button class="btn primary" type="button" id="mChargeBtn">+ Add charge</button>
+        <button class="btn" type="button" id="mEditBtn">Edit mare</button>
+      </div>
+      <form class="seg" id="mChargeForm" hidden>
+        <div class="row">
+          <div class="field"><label for="mxKind">What for</label><select id="mxKind">${Object.entries(MCHARGE).map(([k, v]) => `<option value="${k}">${v}</option>`).join("")}</select></div>
+          <div class="field"><label for="mxDate">Date</label><input id="mxDate" type="date" required value="${t}"></div>
+        </div>
+        <div class="row">
+          <div class="field"><label for="mxDesc">Details</label><input id="mxDesc" type="text" placeholder="e.g. 14-day scan, in foal"></div>
+          <div class="field"><label for="mxAmt">Amount ($)</label><input id="mxAmt" type="text" inputmode="decimal" placeholder="e.g. 85.00"></div>
+        </div>
+        <label class="small" style="display:flex;gap:8px;align-items:center;font-weight:400"><input type="checkbox" id="mxInv"> Already invoiced</label>
+        <div class="row"><button class="btn primary" type="submit">Save charge</button><button class="btn" type="button" id="mxCancel">Cancel</button></div>
+        <div class="small" id="mxMsg" hidden></div>
+      </form>
+      <form class="seg" id="mEditForm" ${S.editMare ? "" : "hidden"}>
+        <div class="row">
+          <div class="field"><label for="meName">Mare's name</label><input id="meName" type="text" required value="${esc(m.name)}"></div>
+          <div class="field"><label for="meOwner">Owner (who to invoice)</label><input id="meOwner" type="text" value="${esc(m.owner || "")}"></div>
+        </div>
+        <div class="field"><label for="meNotes">Notes</label><input id="meNotes" type="text" value="${esc(m.notes || "")}" placeholder="Age, in foal to…, due date, phone…"></div>
+        <div class="row"><button class="btn primary" type="submit">Save changes</button><button class="btn" type="button" id="meCancel">Cancel</button></div>
+        <div class="small" id="meMsg" hidden></div>
+        <div class="confirm" id="mDelWrap" style="margin-top:6px"><button class="link" type="button" id="mDel">Delete ${esc(m.name)} and all her records</button></div>
+      </form>
+    </div>
+    <div class="card"><div class="topline"><h3>Vet &amp; other charges</h3>${owed ? `<span class="small">Not yet invoiced: <b class="mono">${money(owed)}</b></span>` : ""}</div>
+      ${hx.length ? `<div class="history">${hx.map(r => mRecRow(r, false, "mx")).join("")}</div>` : `<p class="muted small" style="margin:0">No charges recorded yet.</p>`}
+    </div>
+    ${mCareCard("feet", m)}
+    ${mCareCard("worm", m)}`;
+  const rerender = () => renderMareDetail();
+  $("mBack").onclick = () => { S.openMare = null; S.editMare = false; renderMares(); };
+  $("mChargeBtn").onclick = () => { $("mChargeForm").hidden = !$("mChargeForm").hidden; $("mEditForm").hidden = true; };
+  $("mxCancel").onclick = () => { $("mChargeForm").hidden = true; };
+  $("mChargeForm").onsubmit = async (e) => {
+    e.preventDefault();
+    const kind = $("mxKind").value, desc = $("mxDesc").value.trim(), amount = readAmount($("mxAmt").value);
+    if (amount === false){ msg("mxMsg", "Enter the amount as a number, e.g. 85.00", false); return; }
+    if (!desc && amount == null){ msg("mxMsg", "Add the details or the amount.", false); return; }
+    const inv = $("mxInv").checked;
+    const rec = { mareId: m.id, mareName: m.name, cat: "charge", kind, date: $("mxDate").value || todayStr(), nextDue: "", detail: desc, amount,
+      invoiced: inv, invoicedAt: inv ? new Date().toISOString() : "", createdAt: new Date().toISOString() };
+    try{ await save("mareRecs", uid("r"), rec); }catch(err){ msg("mxMsg", saveErrMsg(err), false); }
+  };
+  $("mEditBtn").onclick = () => { S.editMare = !S.editMare; $("mEditForm").hidden = !S.editMare; $("mChargeForm").hidden = true; if (S.editMare) $("meName").focus(); };
+  $("meCancel").onclick = () => { S.editMare = false; rerender(); };
+  $("mEditForm").onsubmit = async (e) => {
+    e.preventDefault();
+    const name = $("meName").value.trim(); if (!name) return;
+    try{ await patch("mares", m.id, { name, owner: $("meOwner").value.trim(), notes: $("meNotes").value.trim(), updatedAt: new Date().toISOString() }); S.editMare = false; }
+    catch(err){ msg("meMsg", saveErrMsg(err), false); }
+  };
+  $("mDel").onclick = () => confirmIn($("mDelWrap"), `Delete ${m.name} and all her records? You can restore them from Recently deleted in Settings for 30 days.`, async () => {
+    try{
+      const jobs = mRecs(m.id).map(r => ["mareRecs", r.id]);
+      await trashAndRemove([["mares", m.id], ...jobs], `${m.name} and all her records (${jobs.length})`);
+      S.openMare = null; S.editMare = false; renderMares();
+    }catch(err){ alertBox("storeNote", saveErrMsg(err)); }
+  }, rerender);
+  ["feet", "worm"].forEach(c => bindMCare(c, m));
+  ["mx", "mc"].forEach(k => bindDeletes(d, k, rerender));
+  bindInvoice(d);
 }
 
 function confirmIn(wrap, q, yes, onCancel){

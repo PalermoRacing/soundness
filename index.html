@@ -59,6 +59,7 @@
     <button role="tab" aria-selected="false" data-tab="temp">Temp</button>
     <button role="tab" aria-selected="false" data-tab="check">Gait</button>
     <button role="tab" aria-selected="false" data-tab="horses">Horses</button>
+    <button role="tab" aria-selected="false" data-tab="mares">Mares</button>
   </nav>
 
   <div id="storeNote" class="banner" hidden></div>
@@ -315,6 +316,18 @@
     <div id="careOverview"></div>
     <div id="horsesList"></div>
     <div id="horseDetail" hidden></div>
+  </section>
+
+  <!-- BROODMARES -->
+  <section class="panel" id="panel-mares" hidden>
+    <div id="maresTop" class="row">
+      <div class="field"><label for="mareSearch">Search mares or owners</label><input id="mareSearch" type="search" placeholder="Type a name…" autocomplete="off"></div>
+      <button class="btn" id="mAddBtn" type="button">+ Add mare</button>
+    </div>
+    <div id="mAddSlot"></div>
+    <div id="mOverview"></div>
+    <div id="maresList"></div>
+    <div id="mareDetail" hidden></div>
   </section>
 
   <!-- GUIDE -->
