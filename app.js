@@ -1795,7 +1795,7 @@ function renderHorses(){
       slow ? `<span class="pill p-possible">Slow HR recovery</span>` : "", hot ? `<span class="pill p-lame">High temp</span>` : ""].filter(Boolean).join(" ");
     return `<button class="horse" type="button" data-horse="${esc(h.id)}">
       <span class="nm">${esc(hShort(h))}</span>
-      ${last?`<span class="pill p-${last.result.verdict}">${VERDICT[last.result.verdict]}</span>`:"<span></span>"}
+      <span></span>
       <span class="sm">${esc(sub)}</span>
       <span>${pills}</span>
     </button>`;}).join("")}</div>`;
