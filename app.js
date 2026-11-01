@@ -1587,9 +1587,10 @@ function bindCareForm(kind, h){
 }
 function careCard(kind, h){
   const st = careStatus(h.id, kind), recs = careRecords(h.id, kind);
-  const pill = !st || (kind === "shock" && st.level === "ok") || st.level === "none" ? "" : st.level === "overdue" ? `<span class="pill p-lame">Overdue</span>` : st.level === "soon" ? `<span class="pill p-possible">Due soon</span>` : `<span class="pill p-sound">Up to date</span>`;
+  const pill = kind === "shoe" && h.spelling ? `<span class="pill p-unclear">Spelling</span>` : !st || (kind === "shock" && st.level === "ok") || st.level === "none" ? "" : st.level === "overdue" ? `<span class="pill p-lame">Overdue</span>` : st.level === "soon" ? `<span class="pill p-possible">Due soon</span>` : `<span class="pill p-sound">Up to date</span>`;
   return `<div class="card"><div class="topline"><h3>${CARE[kind].name} ${pill}</h3><button class="link" type="button" id="cAdd_${kind}">+ Record ${CARE[kind].name.toLowerCase()}</button></div>
     ${careForm(kind, h)}
+    ${kind === "shoe" && h.spelling ? `<p class="small muted" style="margin:0">Spelling, so no shoeing reminders. Tap <b>Back in work</b> on the horse when they come back in.</p>` : ""}
     ${st ? `<div class="kv"><dt>Last ${CARE[kind].verb}</dt><dd>${esc(fmtDay(st.last.date))}</dd>${kind === "shock" ? `<dt>Where</dt><dd>${esc(st.last.detail || "–")}</dd>` : ""}${st.due ? `<dt>${kind === "shock" ? "Next session" : "Next due"}</dt><dd>${esc(fmtDay(st.due))}</dd>` : ""}</div>
       <details data-fold="hist_${kind}" ${foldOpen("hist_" + kind) ? "open" : ""}><summary class="small">History (${recs.length})</summary><div class="history" style="margin-top:8px">${recs.map(c => careRow(c, false, "c" + kind)).join("")}</div></details>`
       : `<p class="muted small" style="margin:0">Nothing recorded yet.</p>`}
@@ -1599,6 +1600,7 @@ function careCard(kind, h){
 function dueList(){
   const out = [];
   for (const h of S.horses) for (const kind of ["shoe", "worm"]){
+    if (kind === "shoe" && h.spelling) continue;   // no shoeing reminders while a horse is spelling
     const st = careStatus(h.id, kind); if (st && st.level !== "ok" && st.level !== "none") out.push({ h, kind, ...st });
   }
   return out.sort((a, b) => a.due.localeCompare(b.due));
@@ -1787,7 +1789,8 @@ function renderHorses(){
     const sub = [h.stableName && h.stableName.toLowerCase() !== String(h.name).toLowerCase() ? h.name : "", h.gait==="trotter"?"Trotter":"Pacer",
       lw ? `last worked ${fmtDay(lw.date)}` : ""].filter(Boolean).join(" · ");
     const pills = [
-      shoe?.level === "overdue" ? `<span class="pill p-lame">Shoeing overdue</span>` : shoe?.level === "soon" ? `<span class="pill p-possible">Shoeing due</span>` : "",
+      h.spelling ? `<span class="pill p-unclear">Spelling</span>` : "",
+      h.spelling ? "" : shoe?.level === "overdue" ? `<span class="pill p-lame">Shoeing overdue</span>` : shoe?.level === "soon" ? `<span class="pill p-possible">Shoeing due</span>` : "",
       worm?.level === "overdue" ? `<span class="pill p-lame">Worming overdue</span>` : worm?.level === "soon" ? `<span class="pill p-possible">Worming due</span>` : "",
       slow ? `<span class="pill p-possible">Slow HR recovery</span>` : "", hot ? `<span class="pill p-lame">High temp</span>` : ""].filter(Boolean).join(" ");
     return `<button class="horse" type="button" data-horse="${esc(h.id)}">
@@ -1823,7 +1826,7 @@ function renderHorseDetail(){
   const hr10 = hh.slice(0, 30).filter(r => r.bpm10 != null).map(r => ({ d: r.at, v: r.bpm10 })), hr20 = hh.slice(0, 30).filter(r => r.bpm20 != null).map(r => ({ d: r.at, v: r.bpm20 }));
   d.innerHTML = `<button class="link" type="button" id="backAll">← All horses</button>
     <div class="card">
-      <div><span class="eyebrow">${h.gait==="trotter"?"Trotter":"Pacer"}</span><h2>${esc(hShort(h))}</h2>
+      <div><span class="eyebrow">${h.gait==="trotter"?"Trotter":"Pacer"}${h.spelling ? ` · Spelling${h.spellingSince ? " since " + esc(fmtDay(h.spellingSince)) : ""}` : ""}</span><h2>${esc(hShort(h))}</h2>
         ${showRace?`<p class="small" style="margin:4px 0 0">Race name: <b>${esc(h.name)}</b></p>`:""}
         ${h.notes?`<p class="muted small" style="margin:4px 0 0">${esc(h.notes)}</p>`:""}</div>
       <div class="row">
@@ -1832,6 +1835,7 @@ function renderHorseDetail(){
         <button class="btn" type="button" id="chargeThis">+ Vet / charge</button>
         <button class="btn" type="button" id="tempThis">+ Temp</button>
         <button class="btn" type="button" id="checkThis">Gait check</button>
+        <button class="btn" type="button" id="spellThis">${h.spelling ? "Back in work" : "Mark as spelling"}</button>
         <button class="btn" type="button" id="editThis">Edit horse</button>
       </div>
       <form class="seg" id="editForm" ${S.editHorse?"":"hidden"}>
@@ -1921,6 +1925,11 @@ function renderHorseDetail(){
     no.onclick = () => box.remove();
   });
   CARE_KINDS.forEach(k => bindCareForm(k, h));
+  $("spellThis").onclick = async () => {
+    const on = !h.spelling;
+    try{ await patch("horses", h.id, { spelling: on, spellingSince: on ? todayStr() : "", updatedAt: new Date().toISOString() }); }
+    catch(err){ alertBox("storeNote", saveErrMsg(err)); }
+  };
   $("editThis").onclick = () => { S.editHorse = !S.editHorse; $("editForm").hidden = !S.editHorse; if (S.editHorse) $("eName").focus(); };
   $("eCancel").onclick = () => { S.editHorse = false; rerender(); };
   $("editForm").onsubmit = async (e) => {
